@@ -123,7 +123,7 @@ jobs:
       - name: 配置 Flutter 平台
         run: |
           cd flutter
-          flutter config --enable-android
+          flutter create . --platforms android
 
       - name: 生成桥接代码
         run: |
@@ -255,7 +255,7 @@ jobs:
         if: steps.check_enabled.outputs.enabled == 'true'
         run: |
           cd flutter
-          flutter config --enable-windows-desktop
+          flutter create . --platforms windows
 
       - name: 生成桥接代码
         if: steps.check_enabled.outputs.enabled == 'true'
@@ -448,7 +448,7 @@ jobs:
         if: steps.check_enabled.outputs.enabled == 'true'
         run: |
           cd flutter
-          flutter config --enable-linux-desktop
+          flutter create . --platforms linux
 
       - name: 生成桥接代码
         if: steps.check_enabled.outputs.enabled == 'true'
@@ -638,7 +638,7 @@ jobs:
         if: steps.check_enabled.outputs.enabled == 'true'
         run: |
           cd flutter
-          flutter config --enable-macos-desktop
+          flutter create . --platforms macos
 
       - name: 生成桥接代码
         if: steps.check_enabled.outputs.enabled == 'true'

@@ -1,5 +1,0 @@
-package com.cfnat.manager
-
-import io.flutter.embedding.android.FlutterActivity
-
-class MainActivity : FlutterActivity()
