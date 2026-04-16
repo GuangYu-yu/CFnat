@@ -125,6 +125,19 @@ jobs:
           cd flutter
           flutter create . --platforms android
 
+      - name: 复制图标
+        run: |
+          mkdir -p flutter/android/app/src/main/res/mipmap-mdpi
+          mkdir -p flutter/android/app/src/main/res/mipmap-hdpi
+          mkdir -p flutter/android/app/src/main/res/mipmap-xhdpi
+          mkdir -p flutter/android/app/src/main/res/mipmap-xxhdpi
+          mkdir -p flutter/android/app/src/main/res/mipmap-xxxhdpi
+          cp flutter/icon/icon.png flutter/android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          cp flutter/icon/icon.png flutter/android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+          cp flutter/icon/icon.png flutter/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          cp flutter/icon/icon.png flutter/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          cp flutter/icon/icon.png flutter/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
       - name: 生成桥接代码
         run: |
           cd flutter
@@ -256,6 +269,12 @@ jobs:
         run: |
           cd flutter
           flutter create . --platforms windows
+
+      - name: 复制图标
+        if: steps.check_enabled.outputs.enabled == 'true'
+        run: |
+          mkdir -p flutter/windows/runner/Resources
+          cp flutter/icon/icon.ico flutter/windows/runner/Resources/app_icon.ico
 
       - name: 生成桥接代码
         if: steps.check_enabled.outputs.enabled == 'true'
@@ -548,10 +567,12 @@ jobs:
           [Desktop Entry]
           Name=${{ env.APP_NAME }}
           Exec=${{ env.APP_NAME }}
+          Icon=${{ env.APP_NAME }}
           Type=Application
           Categories=Network;
           EOF
           
+          cp flutter/icon/icon.png "AppDir/${{ env.APP_NAME }}.png"
           cp AppDir/${{ env.APP_NAME }}.desktop AppDir/usr/share/applications/
           
           ARCH=${{ matrix.appimage_arch }} ./appimagetool AppDir ${{ github.workspace }}/output/${{ env.APP_NAME }}-linux-${{ matrix.arch }}.AppImage
@@ -632,6 +653,11 @@ jobs:
         run: |
           cd flutter
           flutter create . --platforms macos
+
+      - name: 复制图标
+        if: steps.check_enabled.outputs.enabled == 'true'
+        run: |
+          cp flutter/icon/icon.icns flutter/macos/Runner/AppIcon.icns
 
       - name: 生成桥接代码
         if: steps.check_enabled.outputs.enabled == 'true'

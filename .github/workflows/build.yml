@@ -71,6 +71,14 @@ jobs:
           cd flutter
           flutter create . --platforms web
 
+      - name: 复制图标
+        run: |
+          cp flutter/icon/icon.png flutter/web/icons/Icon-192.png
+          cp flutter/icon/icon.png flutter/web/icons/Icon-512.png
+          cp flutter/icon/icon.png flutter/web/icons/Icon-maskable-192.png
+          cp flutter/icon/icon.png flutter/web/icons/Icon-maskable-512.png
+          cp flutter/icon/icon.png flutter/web/favicon.png
+
       - name: 构建 Flutter Web
         run: |
           cd flutter
