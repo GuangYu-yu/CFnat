@@ -343,9 +343,6 @@ jobs:
           [Languages]
           Name: "chinesesimplified"; MessagesFile: "Languages\ChineseSimplified.isl"
 
-          [CustomMessages]
-          chinesesimplified.LaunchProgram=%1 安装成功
-
           [Files]
           Source: "flutter\build\windows\${{ matrix.flutter_arch }}\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 
