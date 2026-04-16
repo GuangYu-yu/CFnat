@@ -124,6 +124,7 @@ jobs:
         run: |
           cd flutter
           flutter create . --platforms android
+          sed -i 's/android:label="[^"]*"/android:label="${{ env.APP_NAME }}"/' flutter/android/app/src/main/AndroidManifest.xml
 
       - name: 复制图标
         run: |
@@ -361,7 +362,7 @@ jobs:
         if: steps.check_enabled.outputs.enabled == 'true'
         run: |
           mkdir -p Languages
-          curl -L -o Languages/ChineseSimplified.isl https://github.com/jrsoftware/issrc/raw/main/Files/Languages/Unofficial/ChineseSimplified.isl
+          curl -L -o Languages/ChineseSimplified.isl https://raw.githubusercontent.com/kira-96/Inno-Setup-Chinese-Simplified-Translation/main/ChineseSimplified.isl
 
       - name: 编译 Inno Setup 安装包
         if: steps.check_enabled.outputs.enabled == 'true'
