@@ -124,7 +124,7 @@ jobs:
         run: |
           cd flutter
           flutter create . --platforms android
-          sed -i 's/android:label="[^"]*"/android:label="${{ env.APP_NAME }}"/' flutter/android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:label="[^"]*"/android:label="${{ env.APP_NAME }}"/' android/app/src/main/AndroidManifest.xml
 
       - name: 复制图标
         run: |
