@@ -273,7 +273,6 @@ jobs:
       - name: 复制图标
         if: steps.check_enabled.outputs.enabled == 'true'
         run: |
-          mkdir -p flutter/windows/runner/Resources
           cp flutter/icon/icon.ico flutter/windows/runner/Resources/app_icon.ico
 
       - name: 生成桥接代码
