@@ -284,6 +284,21 @@ jobs:
           $VERSION_NUM = $VERSION -replace '^v', ''
           flutter build windows --release --build-name="$VERSION_NUM"
 
+      - name: 重命名
+        if: steps.check_enabled.outputs.enabled == 'true'
+        run: |
+          $releaseDir = "flutter/build/windows/${{ matrix.flutter_arch }}/runner/Release"
+          $exe = Get-ChildItem -Path $releaseDir -Filter "*.exe" | Where-Object { $_.Name -match "^${{ env.APP_NAME }}" } | Select-Object -First 1
+          if ($exe) {
+            $newName = "${{ env.APP_NAME }}.exe"
+            if ($exe.Name -ne $newName) {
+              Rename-Item -Path $exe.FullName -NewName $newName
+              Write-Host "已重命名 $($exe.Name) -> $newName"
+            }
+          } else {
+            Write-Host "警告: 未找到可重命名的 exe"
+          }
+
       - name: 复制 DLL 到输出目录
         if: steps.check_enabled.outputs.enabled == 'true'
         run: cp flutter/rust/target/${{ matrix.rust_target }}/release/${{ env.RUST_LIB_NAME }}.dll flutter/build/windows/${{ matrix.flutter_arch }}/runner/Release/
@@ -339,6 +354,7 @@ jobs:
     if: ${{ inputs.build_linux_x64 || inputs.build_linux_arm64 }}
     runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: x64
@@ -461,65 +477,51 @@ jobs:
           VERSION_NUM="${VERSION#v}"
           flutter build linux --release --build-name="$VERSION_NUM"
 
-      - name: 复制 so 到输出目录
+      - name: 确定 Bundle 目录并复制 so
         if: steps.check_enabled.outputs.enabled == 'true'
+        id: bundle_setup
         run: |
           if [ "${{ matrix.arch }}" == "x64" ]; then
-            BUNDLE_DIR="flutter/build/linux/${{ matrix.flutter_bundle_dir }}"
-            mkdir -p "$BUNDLE_DIR/lib"
-            cp flutter/rust/target/${{ matrix.rust_target }}/release/lib${{ env.RUST_LIB_NAME }}.so "$BUNDLE_DIR/lib/"
+            BUNDLE_DIR="${{ github.workspace }}/flutter/build/linux/${{ matrix.flutter_bundle_dir }}"
           else
-            BUNDLE_DIR=$(find flutter/build/linux -type d -name "bundle" | head -1)
+            BUNDLE_DIR=$(find "${{ github.workspace }}/flutter/build/linux" -type d -name "bundle" | head -1)
             if [ -z "$BUNDLE_DIR" ]; then
               echo "错误：未找到 Flutter bundle 目录"
               exit 1
             fi
-            echo "使用 bundle 目录: $BUNDLE_DIR"
-            mkdir -p "$BUNDLE_DIR/lib"
+          fi
+          echo "BUNDLE_DIR=$BUNDLE_DIR" >> $GITHUB_OUTPUT
+          
+          mkdir -p "$BUNDLE_DIR/lib"
+          if [ "${{ matrix.arch }}" == "x64" ]; then
+            cp flutter/rust/target/${{ matrix.rust_target }}/release/lib${{ env.RUST_LIB_NAME }}.so "$BUNDLE_DIR/lib/"
+          else
             cp flutter/rust/target/release/lib${{ env.RUST_LIB_NAME }}.so "$BUNDLE_DIR/lib/"
           fi
 
-      - name: 打包发布文件
+      - name: 打包 tar.gz、deb、rpm
         if: steps.check_enabled.outputs.enabled == 'true'
         run: |
           version="${{ needs.validate_version.outputs.version }}"
           versionStr="${version#v}"
           mkdir -p ${{ github.workspace }}/output
           
-          if [ "${{ matrix.arch }}" == "x64" ]; then
-            BUNDLE_DIR="${{ github.workspace }}/flutter/build/linux/${{ matrix.flutter_bundle_dir }}"
-          else
-            BUNDLE_DIR=$(find ${{ github.workspace }}/flutter/build/linux -type d -name "bundle" | head -1)
-            if [ -z "$BUNDLE_DIR" ]; then
-              echo "错误：未找到 Flutter bundle 目录"
-              exit 1
-            fi
-            echo "BUNDLE_DIR: $BUNDLE_DIR"
-          fi
+          BUNDLE_DIR=${{ steps.bundle_setup.outputs.BUNDLE_DIR }}
           
           TEMP_DIR="${{ github.workspace }}/temp_tar_dir"
-          
           rm -rf "$TEMP_DIR"
           mkdir -p "$TEMP_DIR"
           cp -r "$BUNDLE_DIR/." "$TEMP_DIR/"
-          
           tar -czf "${{ github.workspace }}/output/${{ env.APP_NAME }}-linux-${{ matrix.arch }}.tar.gz" -C "$TEMP_DIR" .
           rm -rf "$TEMP_DIR"
           
           cd "$BUNDLE_DIR"
-          
           rm -rf deb_root
           mkdir -p deb_root/usr/local/lib/${{ env.APP_NAME }}
           mkdir -p deb_root/usr/local/bin
           find . -maxdepth 1 -mindepth 1 ! -name deb_root -exec cp -r {} deb_root/usr/local/lib/${{ env.APP_NAME }}/ \;
           ln -sf /usr/local/lib/${{ env.APP_NAME }}/${{ env.APP_NAME }} deb_root/usr/local/bin/${{ env.APP_NAME }} || true
           fpm -s dir -t deb -n ${{ env.APP_NAME }} -v ${versionStr} -p ${{ github.workspace }}/output/${{ env.APP_NAME }}-linux-${{ matrix.arch }}.deb -C deb_root usr
-          
-          rm -rf deb_root
-          mkdir -p deb_root/usr/local/lib/${{ env.APP_NAME }}
-          mkdir -p deb_root/usr/local/bin
-          find . -maxdepth 1 -mindepth 1 ! -name deb_root -exec cp -r {} deb_root/usr/local/lib/${{ env.APP_NAME }}/ \;
-          ln -sf /usr/local/lib/${{ env.APP_NAME }}/${{ env.APP_NAME }} deb_root/usr/local/bin/${{ env.APP_NAME }} || true
           fpm -s dir -t rpm -n ${{ env.APP_NAME }} -v ${versionStr} -p ${{ github.workspace }}/output/${{ env.APP_NAME }}-linux-${{ matrix.arch }}.rpm -C deb_root usr
 
       - name: 下载 AppImageTool
@@ -531,15 +533,7 @@ jobs:
       - name: 创建 AppImage
         if: steps.check_enabled.outputs.enabled == 'true'
         run: |
-          if [ "${{ matrix.arch }}" == "x64" ]; then
-            BUNDLE_DIR="${{ github.workspace }}/flutter/build/linux/${{ matrix.flutter_bundle_dir }}"
-          else
-            BUNDLE_DIR=$(find flutter/build/linux -type d -name "bundle" | head -1)
-            if [ -z "$BUNDLE_DIR" ]; then
-              echo "错误：未找到 Flutter bundle 目录"
-              exit 1
-            fi
-          fi
+          BUNDLE_DIR=${{ steps.bundle_setup.outputs.BUNDLE_DIR }}
           
           mkdir -p AppDir/usr/lib/${{ env.APP_NAME }}
           mkdir -p AppDir/usr/bin
@@ -563,8 +557,8 @@ jobs:
           
           if [ -f "flutter/linux/flutter/ephemeral/assets/icon.png" ]; then
             cp flutter/linux/flutter/ephemeral/assets/icon.png AppDir/${{ env.APP_NAME }}.png
-          else
-            convert -size 256x256 xc:blue AppDir/${{ env.APP_NAME }}.png 2>/dev/null || echo "placeholder" > AppDir/${{ env.APP_NAME }}.png
+          elif command -v convert &> /dev/null; then
+            convert -size 256x256 xc:blue AppDir/${{ env.APP_NAME }}.png
           fi
           
           ARCH=${{ matrix.appimage_arch }} ./appimagetool AppDir ${{ github.workspace }}/output/${{ env.APP_NAME }}-linux-${{ matrix.arch }}.AppImage
