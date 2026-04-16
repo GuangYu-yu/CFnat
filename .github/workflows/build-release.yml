@@ -548,18 +548,11 @@ jobs:
           [Desktop Entry]
           Name=${{ env.APP_NAME }}
           Exec=${{ env.APP_NAME }}
-          Icon=${{ env.APP_NAME }}
           Type=Application
           Categories=Network;
           EOF
           
           cp AppDir/${{ env.APP_NAME }}.desktop AppDir/usr/share/applications/
-          
-          if [ -f "flutter/linux/flutter/ephemeral/assets/icon.png" ]; then
-            cp flutter/linux/flutter/ephemeral/assets/icon.png AppDir/${{ env.APP_NAME }}.png
-          elif command -v convert &> /dev/null; then
-            convert -size 256x256 xc:blue AppDir/${{ env.APP_NAME }}.png
-          fi
           
           ARCH=${{ matrix.appimage_arch }} ./appimagetool AppDir ${{ github.workspace }}/output/${{ env.APP_NAME }}-linux-${{ matrix.arch }}.AppImage
 
