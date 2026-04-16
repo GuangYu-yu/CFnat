@@ -340,7 +340,7 @@ jobs:
           Compression=lzma2
 
           [Languages]
-          Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+          Name: "chinesesimplified"; MessagesFile: "Languages\ChineseSimplified.isl"
 
           [CustomMessages]
           chinesesimplified.LaunchProgram=%1 安装成功
@@ -359,10 +359,8 @@ jobs:
 
       - name: 下载中文语言文件
         if: steps.check_enabled.outputs.enabled == 'true'
-        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path Languages | Out-Null
-          Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/raw/main/Files/Languages/Unofficial/ChineseSimplified.isl" -OutFile "Languages/ChineseSimplified.isl"
+          curl -L -o Languages/ChineseSimplified.isl https://github.com/jrsoftware/issrc/raw/main/Files/Languages/Unofficial/ChineseSimplified.isl
 
       - name: 编译 Inno Setup 安装包
         if: steps.check_enabled.outputs.enabled == 'true'
