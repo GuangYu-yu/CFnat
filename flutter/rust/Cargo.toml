@@ -13,7 +13,7 @@ name = "cfnat_flutter"
 [dependencies]
 CFnat = { path = "../.." }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
-flutter_rust_bridge = "=2.11.1"
+flutter_rust_bridge = "2.12"
 
 [profile.release]
 opt-level = 3           # 最高级别的优化

@@ -20,7 +20,7 @@ abstract class AppService extends ChangeNotifier {
     int? tlsPort,
     int? httpPort,
     List<String>? colo,
-    String? listenAddr,
+    String? addr,
     int? maxStickySlots,
   });
   Future<bool> stopService();

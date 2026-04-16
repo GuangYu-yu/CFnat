@@ -633,7 +633,7 @@ class _ConfigPanelState extends State<ConfigPanel> {
                     colo: _dataCenterController.text.isNotEmpty
                         ? _dataCenterController.text.split(',').map((e) => e.trim()).toList()
                         : null,
-                    listenAddr: _localServiceController.text.isNotEmpty 
+                    addr: _localServiceController.text.isNotEmpty 
                         ? _localServiceController.text : null,
                     maxStickySlots: int.tryParse(_maxStickySlotsController.text),
                   ),

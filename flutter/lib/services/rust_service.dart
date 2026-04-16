@@ -93,7 +93,7 @@ class RustService extends AppService {
     try {
       final result = await rust.getConfig();
       _config = ConfigData(
-        addr: result.listenAddr,
+        addr: result.addr,
         delayLimit: result.delayLimit.toInt(),
         tlr: result.tlr,
         ips: result.ips,
@@ -123,7 +123,7 @@ class RustService extends AppService {
     int? tlsPort,
     int? httpPort,
     List<String>? colo,
-    String? listenAddr,
+    String? addr,
     int? maxStickySlots,
   }) async {
     try {
@@ -138,7 +138,7 @@ class RustService extends AppService {
         tlsPort: tlsPort,
         httpPort: httpPort,
         maxStickySlots: maxStickySlots,
-        listenAddr: listenAddr,
+        addr: addr,
         colo: colo,
       );
       if (success) {

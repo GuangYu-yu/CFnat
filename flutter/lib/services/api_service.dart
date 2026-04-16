@@ -167,24 +167,24 @@ class ApiService extends AppService {
     int? tlsPort,
     int? httpPort,
     List<String>? colo,
-    String? listenAddr,
+    String? addr,
     int? maxStickySlots,
   }) async {
     try {
       final body = <String, dynamic>{
-        if (ipFile != null) 'ip_file': ipFile,
-        if (ipContent != null) 'ip_content': ipContent,
-        if (http != null) 'http': http,
-        if (delayLimit != null) 'delay_limit': delayLimit,
-        if (tlr != null) 'tlr': tlr,
-        if (ips != null) 'ips': ips,
-        if (threads != null) 'threads': threads,
-        if (tlsPort != null) 'tls_port': tlsPort,
-        if (httpPort != null) 'http_port': httpPort,
-        if (colo != null) 'colo': colo,
-        if (listenAddr != null) 'addr': listenAddr,
-        if (maxStickySlots != null) 'max_sticky_slots': maxStickySlots,
-      };
+        'ip_file': ipFile,
+        'ip_content': ipContent,
+        'http': http,
+        'delay_limit': delayLimit,
+        'tlr': tlr,
+        'ips': ips,
+        'threads': threads,
+        'tls_port': tlsPort,
+        'http_port': httpPort,
+        'colo': colo,
+        'addr': addr,
+        'max_sticky_slots': maxStickySlots,
+      }..removeWhere((key, value) => value == null);
 
       final response = await post(
         Uri.parse('/api/start'),

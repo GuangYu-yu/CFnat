@@ -34,7 +34,7 @@ class RustService extends AppService {
     int? tlsPort,
     int? httpPort,
     List<String>? colo,
-    String? listenAddr,
+    String? addr,
     int? maxStickySlots,
   }) async => false;
   @override
