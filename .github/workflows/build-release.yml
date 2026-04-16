@@ -360,6 +360,7 @@ jobs:
       - name: 下载中文语言文件
         if: steps.check_enabled.outputs.enabled == 'true'
         run: |
+          mkdir -p Languages
           curl -L -o Languages/ChineseSimplified.isl https://github.com/jrsoftware/issrc/raw/main/Files/Languages/Unofficial/ChineseSimplified.isl
 
       - name: 编译 Inno Setup 安装包
