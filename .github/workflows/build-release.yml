@@ -137,11 +137,7 @@ jobs:
           sed -i 's/namespace = "[^"]*"/namespace = "${{ env.APP_ID }}"/' android/app/build.gradle.kts
 
           mkdir -p android/app/src/main/res/values
-          cat > android/app/src/main/res/values/strings.xml <<EOF
-<resources>
-    <string name="app_name">${{ env.APP_DISPLAY_NAME }}</string>
-</resources>
-EOF
+          printf '<resources>\n    <string name="app_name">%s</string>\n</resources>\n' "${{ env.APP_DISPLAY_NAME }}" > android/app/src/main/res/values/strings.xml
 
           sed -i 's/android:label="[^"]*"/android:label="@string\/app_name"/' android/app/src/main/AndroidManifest.xml
 
