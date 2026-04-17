@@ -6,16 +6,21 @@ use serde::Serialize;
 
 const MAX_LOG_ENTRIES: usize = 500;
 
-static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+static START_TIME: RwLock<Option<Instant>> = RwLock::new(None);
 
 fn format_time() -> String {
-    let start = START_TIME.get_or_init(Instant::now);
+    let mut guard = START_TIME.write();
+    let start = guard.get_or_insert_with(Instant::now);
     let elapsed = start.elapsed();
     let total_secs = elapsed.as_secs();
     let hours = total_secs / 3600;
     let mins = (total_secs % 3600) / 60;
     let secs = total_secs % 60;
     format!("{:02}:{:02}:{:02}", hours, mins, secs)
+}
+
+pub fn reset_start_time() {
+    *START_TIME.write() = Some(Instant::now());
 }
 
 #[derive(Clone, Serialize)]

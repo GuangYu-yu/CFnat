@@ -1,12 +1,13 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use parking_lot::RwLock;
+use tokio::task::JoinHandle;
 
 use crate::core::{IpPool, LoadBalancer, HttpingConfig, build_hyper_client, parse_url, run_continuous_httping, run_forward, CancellationToken};
 use crate::core::types::{StatusInfo, ConfigOverrides};
-use crate::log::push_log;
+use crate::log::{push_log, reset_start_time, get_log_buffer};
 
 pub struct ServiceState {
     pub running: AtomicBool,
@@ -15,6 +16,7 @@ pub struct ServiceState {
     pub config: RwLock<ServiceConfig>,
     pub cancel_token: RwLock<Option<CancellationToken>>,
     pub start_time: RwLock<Option<Instant>>,
+    pub task_handles: RwLock<Vec<JoinHandle<()>>>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -81,6 +83,7 @@ impl ServiceState {
             config: RwLock::new(ServiceConfig::default()),
             cancel_token: RwLock::new(None),
             start_time: RwLock::new(None),
+            task_handles: RwLock::new(Vec::new()),
         }
     }
 
@@ -174,6 +177,10 @@ impl ServiceState {
     }
 
     fn start_with_pool(&self, ip_pool: Arc<IpPool>) -> Result<(), String> {
+        // 启动前清空旧日志并重置时间基准
+        reset_start_time();
+        get_log_buffer().clear();
+
         let config = self.get_config();
 
         let (_, host, _, _) = parse_url(&config.http)
@@ -219,7 +226,7 @@ impl ServiceState {
         let addr = config.addr;
         let cancel_token_for_httping = cancel_token.clone();
 
-        tokio::spawn(async move {
+        let httping_handle: JoinHandle<()> = tokio::spawn(async move {
             run_continuous_httping(
                 ip_pool_clone,
                 lb_clone,
@@ -242,11 +249,13 @@ impl ServiceState {
         let lb_forward = lb.clone();
         let forward_cancel_token = cancel_token.clone();
         
-        tokio::spawn(async move {
+        let forward_handle: JoinHandle<()> = tokio::spawn(async move {
             if let Err(e) = run_forward(addr, lb_forward, tls_port, http_port, forward_cancel_token).await {
                 push_log("ERROR", &format!("转发服务错误：{}", e));
             }
         });
+
+        self.task_handles.write().extend([httping_handle, forward_handle]);
 
         Ok(())
     }
@@ -256,11 +265,27 @@ impl ServiceState {
             return Err("服务未运行".to_string());
         }
 
+        // 先取消 ServiceState 的 CancellationToken，让 forward 和 httping 任务收到停止信号
+        if let Some(token) = self.cancel_token.read().as_ref() {
+            token.cancel();
+        }
+
+        // 再取消 LoadBalancer 自己的 CancellationToken，让健康检查和 sticky 维护器退出
         if let Some(lb) = self.loadbalancer.read().as_ref() {
             lb.stop();
         }
         
         self.running.store(false, Ordering::Relaxed);
+
+        // 等待所有已注册的任务退出（带超时）
+        let handles: Vec<JoinHandle<()>> = self.task_handles.write().drain(..).collect();
+        for handle in handles {
+            let rt = tokio::runtime::Handle::try_current();
+            if let Ok(rt) = rt {
+                let _ = rt.block_on(tokio::time::timeout(Duration::from_secs(3), handle));
+            }
+        }
+
         *self.ip_pool.write() = None;
         *self.loadbalancer.write() = None;
         *self.cancel_token.write() = None;

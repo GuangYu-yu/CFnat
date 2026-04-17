@@ -13,4 +13,4 @@ pub use core::{
     ServiceConfig, ServiceState,
     build_hyper_client, init_global_limiter, parse_url, run_continuous_httping, run_forward,
 };
-pub use log::{get_log_buffer, push_log, LogBuffer, LogEntry};
+pub use log::{get_log_buffer, push_log, reset_start_time, LogBuffer, LogEntry};
