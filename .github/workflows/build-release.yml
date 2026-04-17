@@ -137,8 +137,19 @@ jobs:
           sed -i 's/android:label="[^"]*"/android:label="${{ env.APP_DISPLAY_NAME }}"/' android/app/src/main/AndroidManifest.xml
           sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
           sed -i 's/android:label=/android:usesCleartextTraffic="true" android:label=/' android/app/src/main/AndroidManifest.xml
-          find android/app/src/main/kotlin -type d -name "com.cfnat.*" -exec sh -c 'for d; do mv "$d" "$(echo "$d" | sed "s/com\.cfnat\.[^/]*/$(echo "${{ env.APP_ID }}" | tr "." "\/")/")"; done' _ {} +
-          find android/app/src/main/kotlin -type f -name "*.kt" -exec sed -i "s/package com\.cfnat\.[^.]*/package ${{ env.APP_ID | tr '.' '/' }}/" {} +
+          # Dynamically detect old package name and update to new package
+          NEW_PKG="${{ env.APP_ID }}"
+          NEW_PKG_PATH=$(echo "$NEW_PKG" | tr '.' '/')
+          KOTLIN_DIR="android/app/src/main/kotlin"
+          OLD_PKG=$(grep -rh "^package " "$KOTLIN_DIR" --include="*.kt" | head -1 | sed 's/package //')
+          OLD_PKG_PATH=$(echo "$OLD_PKG" | tr '.' '/')
+          if [ "$OLD_PKG" != "$NEW_PKG" ]; then
+            mkdir -p "$KOTLIN_DIR/$NEW_PKG_PATH"
+            cp -r "$KOTLIN_DIR/$OLD_PKG_PATH/." "$KOTLIN_DIR/$NEW_PKG_PATH/"
+            find "$KOTLIN_DIR/$NEW_PKG_PATH" -name "*.kt" -exec sed -i "s/package $OLD_PKG/package $NEW_PKG/g" {} +
+            rm -rf "$KOTLIN_DIR/$OLD_PKG_PATH"
+            find "$KOTLIN_DIR" -type d -empty -delete
+          fi
 
       - name: 复制图标
         run: |
