@@ -54,8 +54,9 @@ async fn handle_client(
     http_port: u16,
 ) -> io::Result<()> {
     let mut buf = [0u8; 1];
-    
-    client.peek(&mut buf).await?;
+    tokio::time::timeout(Duration::from_secs(5), client.peek(&mut buf))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "peek timed out"))??;
 
     let backend = lb.select().ok_or_else(|| {
         io::Error::new(io::ErrorKind::NotFound, "无可用后端")
@@ -129,11 +130,19 @@ pub async fn run_forward(
     loop {
         tokio::select! {
             accept_result = listener.accept() => {
-                let (client, _) = accept_result?;
-                let lb = lb.clone();
-                tokio::spawn(async move {
-                    if let Err(_e) = handle_client(client, lb, tls_port, http_port).await {}
-                });
+                match accept_result {
+                    Ok((client, _)) => {
+                        let lb = lb.clone();
+                        tokio::spawn(async move {
+                            if let Err(_e) = handle_client(client, lb, tls_port, http_port).await {}
+                        });
+                    }
+                    Err(e) if e.raw_os_error() == Some(24) => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             _ = cancel_token.cancelled() => {
                 push_log("INFO", "[转发服务] 收到停止信号，退出");

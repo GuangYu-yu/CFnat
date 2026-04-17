@@ -34,7 +34,7 @@ class CFnatApp extends StatelessWidget {
         }
       },
       child: MaterialApp(
-        title: 'CFnat Manager',
+        title: 'CFnat',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(

@@ -7,6 +7,10 @@ on:
         description: '版本号 (如 1.0.0，必须大于最新版本)'
         type: string
         required: true
+      prerelease:
+        description: '预发行版'
+        type: boolean
+        default: false
       build_android:
         description: '构建 Android APK'
         type: boolean
@@ -39,6 +43,10 @@ on:
 env:
   # 应用名称，用于生成安装包文件名
   APP_NAME: CFnat
+  # 应用显示名称，用于窗口标题等
+  APP_DISPLAY_NAME: CFnat Manager
+  # 应用标识符，用于包名等
+  APP_ID: com.cfnat.app
   # Rust 库名称，对应 flutter/rust/Cargo.toml 中的 package.name
   RUST_LIB_NAME: cfnat_flutter
   # Android 签名密钥别名默认值，当 ANDROID_KEY_ALIAS Secret 未设置时使用
@@ -124,7 +132,13 @@ jobs:
         run: |
           cd flutter
           flutter create . --platforms android
-          sed -i 's/android:label="[^"]*"/android:label="${{ env.APP_NAME }}"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/namespace = "[^"]*"/namespace = "${{ env.APP_ID }}"/' android/app/build.gradle.kts
+          sed -i 's/applicationId = "[^"]*"/applicationId = "${{ env.APP_ID }}"/' android/app/build.gradle.kts
+          sed -i 's/android:label="[^"]*"/android:label="${{ env.APP_DISPLAY_NAME }}"/' android/app/src/main/AndroidManifest.xml
+          sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:label=/android:usesCleartextTraffic="true" android:label=/' android/app/src/main/AndroidManifest.xml
+          find android/app/src/main/kotlin -type d -name "com.cfnat.*" -exec sh -c 'for d; do mv "$d" "$(echo "$d" | sed "s/com\.cfnat\.[^/]*/$(echo "${{ env.APP_ID }}" | tr "." "\/")/")"; done' _ {} +
+          find android/app/src/main/kotlin -type f -name "*.kt" -exec sed -i "s/package com\.cfnat\.[^.]*/package ${{ env.APP_ID | tr '.' '/' }}/" {} +
 
       - name: 复制图标
         run: |
@@ -267,9 +281,18 @@ jobs:
 
       - name: 配置 Flutter 平台
         if: steps.check_enabled.outputs.enabled == 'true'
+        shell: bash
         run: |
           cd flutter
           flutter create . --platforms windows
+          sed -i 's/project([^ ]* LANGUAGES CXX)/project(${{ env.APP_NAME }} LANGUAGES CXX)/' windows/CMakeLists.txt
+          sed -i 's/set(BINARY_NAME "[^"]*")/set(BINARY_NAME "${{ env.APP_NAME }}")/' windows/CMakeLists.txt
+          sed -i 's/window\.Create(L"[^"]*",/window.Create(L"${{ env.APP_DISPLAY_NAME }}",/' windows/runner/main.cpp
+          sed -i 's/"CompanyName", "[^"]*"/"CompanyName", "${{ env.APP_ID }}"/' windows/runner/Runner.rc
+          sed -i 's/"InternalName", "[^"]*"/"InternalName", "${{ env.APP_NAME }}"/' windows/runner/Runner.rc
+          sed -i 's/"OriginalFilename", "[^"]*\.exe"/"OriginalFilename", "${{ env.APP_NAME }}.exe"/' windows/runner/Runner.rc
+          sed -i 's/"ProductName", "[^"]*"/"ProductName", "${{ env.APP_DISPLAY_NAME }}"/' windows/runner/Runner.rc
+          sed -i 's/"FileDescription", "[^"]*"/"FileDescription", "${{ env.APP_DISPLAY_NAME }}"/' windows/runner/Runner.rc
 
       - name: 复制图标
         if: steps.check_enabled.outputs.enabled == 'true'
@@ -477,6 +500,10 @@ jobs:
         run: |
           cd flutter
           flutter create . --platforms linux
+          sed -i 's/set(BINARY_NAME "[^"]*")/set(BINARY_NAME "${{ env.APP_NAME }}")/' linux/CMakeLists.txt
+          sed -i 's/set(APPLICATION_ID "[^"]*")/set(APPLICATION_ID "${{ env.APP_ID }}")/' linux/CMakeLists.txt
+          sed -i 's/gtk_header_bar_set_title(header_bar, "[^"]*");/gtk_header_bar_set_title(header_bar, "${{ env.APP_DISPLAY_NAME }}");/' linux/runner/my_application.cc
+          sed -i 's/gtk_window_set_title(window, "[^"]*");/gtk_window_set_title(window, "${{ env.APP_DISPLAY_NAME }}");/' linux/runner/my_application.cc
 
       - name: 生成桥接代码
         if: steps.check_enabled.outputs.enabled == 'true'
@@ -662,6 +689,11 @@ jobs:
         run: |
           cd flutter
           flutter create . --platforms macos
+          sed -i 's/PRODUCT_NAME = [^ ]*/PRODUCT_NAME = ${{ env.APP_DISPLAY_NAME }}/' macos/Runner/Configs/AppInfo.xcconfig
+          sed -i 's/PRODUCT_COPYRIGHT = .*/PRODUCT_COPYRIGHT = Copyright © 2026 ${{ env.APP_ID }}. All rights reserved./' macos/Runner/Configs/AppInfo.xcconfig
+          sed -i 's/path = "[^"]*\.app"/path = "${{ env.APP_NAME }}.app"/' macos/Runner.xcodeproj/project.pbxproj
+          sed -i 's/BuildableName = "[^"]*\.app"/BuildableName = "${{ env.APP_NAME }}.app"/' macos/Runner.xcodeproj/project.pbxproj
+          sed -i 's/BuildableName = "[^"]*\.app"/BuildableName = "${{ env.APP_NAME }}.app"/' macos/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
 
       - name: 复制图标
         if: steps.check_enabled.outputs.enabled == 'true'
@@ -764,6 +796,7 @@ jobs:
           tag_name: ${{ needs.validate_version.outputs.version }}
           body_path: release-notes.md
           draft: false
+          prerelease: ${{ inputs.prerelease }}
           files: artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

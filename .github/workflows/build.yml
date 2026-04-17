@@ -70,6 +70,10 @@ jobs:
         run: |
           cd flutter
           flutter create . --platforms web
+          sed -i 's/apple-mobile-web-app-title" content="[^"]*"/apple-mobile-web-app-title" content="${{ env.APP_DISPLAY_NAME }}"/' web/index.html
+          sed -i 's/<title>[^<]*<\/title>/<title>${{ env.APP_DISPLAY_NAME }}<\/title>/' web/index.html
+          sed -i 's/"name": "[^"]*"/"name": "${{ env.APP_DISPLAY_NAME }}"/' web/manifest.json
+          sed -i 's/"short_name": "[^"]*"/"short_name": "${{ env.APP_SHORT_NAME }}"/' web/manifest.json
 
       - name: 复制图标
         run: |

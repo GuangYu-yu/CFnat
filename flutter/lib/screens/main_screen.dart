@@ -28,7 +28,7 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('CFnat Manager'),
+        title: const Text('CFnat'),
         centerTitle: true,
       ),
       body: Consumer<AppService>(
