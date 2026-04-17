@@ -527,7 +527,6 @@ jobs:
           cd flutter
           flutter create . --platforms linux
           sed -i 's/set(BINARY_NAME "[^"]*")/set(BINARY_NAME "${{ env.APP_NAME }}")/' linux/CMakeLists.txt
-          sed -i "s/^Name=.*/Name=${{ env.APP_DISPLAY_NAME }}/" linux/runner/resources/app.desktop
 
       - name: 生成桥接代码
         if: steps.check_enabled.outputs.enabled == 'true'
