@@ -132,23 +132,42 @@ jobs:
         run: |
           cd flutter
           flutter create . --platforms android
-          sed -i 's/namespace = "[^"]*"/namespace = "${{ env.APP_ID }}"/' android/app/build.gradle.kts
+
           sed -i 's/applicationId = "[^"]*"/applicationId = "${{ env.APP_ID }}"/' android/app/build.gradle.kts
-          sed -i 's/android:label="[^"]*"/android:label="${{ env.APP_DISPLAY_NAME }}"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/namespace = "[^"]*"/namespace = "${{ env.APP_ID }}"/' android/app/build.gradle.kts
+
+          mkdir -p android/app/src/main/res/values
+          cat > android/app/src/main/res/values/strings.xml <<EOF
+<resources>
+    <string name="app_name">${{ env.APP_DISPLAY_NAME }}</string>
+</resources>
+EOF
+
+          sed -i 's/android:label="[^"]*"/android:label="@string\/app_name"/' android/app/src/main/AndroidManifest.xml
+
+          grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml || \
           sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
-          sed -i 's/android:label=/android:usesCleartextTraffic="true" android:label=/' android/app/src/main/AndroidManifest.xml
-          # Dynamically detect old package name and update to new package
+
+          grep -q 'usesCleartextTraffic' android/app/src/main/AndroidManifest.xml || \
+          sed -i '/<application / s/>/ android:usesCleartextTraffic="true">/' android/app/src/main/AndroidManifest.xml
+
           NEW_PKG="${{ env.APP_ID }}"
-          NEW_PKG_PATH=$(echo "$NEW_PKG" | tr '.' '/')
           KOTLIN_DIR="android/app/src/main/kotlin"
+
           OLD_PKG=$(grep -rh "^package " "$KOTLIN_DIR" --include="*.kt" | head -1 | sed 's/package //')
-          OLD_PKG_PATH=$(echo "$OLD_PKG" | tr '.' '/')
-          if [ "$OLD_PKG" != "$NEW_PKG" ]; then
-            mkdir -p "$KOTLIN_DIR/$NEW_PKG_PATH"
-            cp -r "$KOTLIN_DIR/$OLD_PKG_PATH/." "$KOTLIN_DIR/$NEW_PKG_PATH/"
-            find "$KOTLIN_DIR/$NEW_PKG_PATH" -name "*.kt" -exec sed -i "s/package $OLD_PKG/package $NEW_PKG/g" {} +
-            rm -rf "$KOTLIN_DIR/$OLD_PKG_PATH"
-            find "$KOTLIN_DIR" -type d -empty -delete
+
+          if [ -n "$OLD_PKG" ] && [ "$OLD_PKG" != "$NEW_PKG" ]; then
+            OLD_PATH=$(echo "$OLD_PKG" | tr '.' '/')
+            NEW_PATH=$(echo "$NEW_PKG" | tr '.' '/')
+
+            mkdir -p "$KOTLIN_DIR/$NEW_PATH"
+
+            mv "$KOTLIN_DIR/$OLD_PATH/"* "$KOTLIN_DIR/$NEW_PATH/" 2>/dev/null || true
+
+            find "$KOTLIN_DIR/$NEW_PATH" -name "*.kt" \
+              -exec sed -i "s/^package $OLD_PKG/package $NEW_PKG/" {} +
+
+            rm -rf "$KOTLIN_DIR/$OLD_PATH"
           fi
 
       - name: 复制图标
@@ -512,9 +531,7 @@ jobs:
           cd flutter
           flutter create . --platforms linux
           sed -i 's/set(BINARY_NAME "[^"]*")/set(BINARY_NAME "${{ env.APP_NAME }}")/' linux/CMakeLists.txt
-          sed -i 's/set(APPLICATION_ID "[^"]*")/set(APPLICATION_ID "${{ env.APP_ID }}")/' linux/CMakeLists.txt
-          sed -i 's/gtk_header_bar_set_title(header_bar, "[^"]*");/gtk_header_bar_set_title(header_bar, "${{ env.APP_DISPLAY_NAME }}");/' linux/runner/my_application.cc
-          sed -i 's/gtk_window_set_title(window, "[^"]*");/gtk_window_set_title(window, "${{ env.APP_DISPLAY_NAME }}");/' linux/runner/my_application.cc
+          sed -i "s/^Name=.*/Name=${{ env.APP_DISPLAY_NAME }}/" linux/runner/resources/app.desktop
 
       - name: 生成桥接代码
         if: steps.check_enabled.outputs.enabled == 'true'
@@ -700,11 +717,14 @@ jobs:
         run: |
           cd flutter
           flutter create . --platforms macos
-          sed -i '' 's/PRODUCT_NAME = [^ ]*/PRODUCT_NAME = ${{ env.APP_DISPLAY_NAME }}/' macos/Runner/Configs/AppInfo.xcconfig
-          sed -i '' 's/PRODUCT_COPYRIGHT = .*/PRODUCT_COPYRIGHT = Copyright (C) 2026 ${{ env.APP_ID }}. All rights reserved./' macos/Runner/Configs/AppInfo.xcconfig
-          sed -i '' 's/path = "[^"]*\.app"/path = "${{ env.APP_NAME }}.app"/' macos/Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/BuildableName = "[^"]*\.app"/BuildableName = "${{ env.APP_NAME }}.app"/' macos/Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/BuildableName = "[^"]*\.app"/BuildableName = "${{ env.APP_NAME }}.app"/' macos/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
+
+          sed -i '' 's/PRODUCT_NAME = .*/PRODUCT_NAME = ${{ env.APP_NAME }}/' macos/Runner/Configs/AppInfo.xcconfig
+
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${{ env.APP_DISPLAY_NAME }}" macos/Runner/Info.plist || \
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${{ env.APP_DISPLAY_NAME }}" macos/Runner/Info.plist
+
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName ${{ env.APP_NAME }}" macos/Runner/Info.plist || \
+          /usr/libexec/PlistBuddy -c "Add :CFBundleName string ${{ env.APP_NAME }}" macos/Runner/Info.plist
 
       - name: 复制图标
         if: steps.check_enabled.outputs.enabled == 'true'
