@@ -700,11 +700,11 @@ jobs:
         run: |
           cd flutter
           flutter create . --platforms macos
-          sed -i 's/PRODUCT_NAME = [^ ]*/PRODUCT_NAME = ${{ env.APP_DISPLAY_NAME }}/' macos/Runner/Configs/AppInfo.xcconfig
-          sed -i 's/PRODUCT_COPYRIGHT = .*/PRODUCT_COPYRIGHT = Copyright © 2026 ${{ env.APP_ID }}. All rights reserved./' macos/Runner/Configs/AppInfo.xcconfig
-          sed -i 's/path = "[^"]*\.app"/path = "${{ env.APP_NAME }}.app"/' macos/Runner.xcodeproj/project.pbxproj
-          sed -i 's/BuildableName = "[^"]*\.app"/BuildableName = "${{ env.APP_NAME }}.app"/' macos/Runner.xcodeproj/project.pbxproj
-          sed -i 's/BuildableName = "[^"]*\.app"/BuildableName = "${{ env.APP_NAME }}.app"/' macos/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
+          sed -i '' 's/PRODUCT_NAME = [^ ]*/PRODUCT_NAME = ${{ env.APP_DISPLAY_NAME }}/' macos/Runner/Configs/AppInfo.xcconfig
+          sed -i '' 's/PRODUCT_COPYRIGHT = .*/PRODUCT_COPYRIGHT = Copyright (C) 2026 ${{ env.APP_ID }}. All rights reserved./' macos/Runner/Configs/AppInfo.xcconfig
+          sed -i '' 's/path = "[^"]*\.app"/path = "${{ env.APP_NAME }}.app"/' macos/Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/BuildableName = "[^"]*\.app"/BuildableName = "${{ env.APP_NAME }}.app"/' macos/Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/BuildableName = "[^"]*\.app"/BuildableName = "${{ env.APP_NAME }}.app"/' macos/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
 
       - name: 复制图标
         if: steps.check_enabled.outputs.enabled == 'true'
