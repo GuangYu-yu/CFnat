@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -107,16 +108,20 @@ async fn handle_client(
     lb: Arc<LoadBalancer>,
     tls_port: u16,
     http_port: u16,
+    warned_no_backend: Arc<AtomicBool>,
 ) -> io::Result<()> {
     // 重试循环：连接失败时尝试下一个后端
     for attempt in 0..MAX_RETRY {
         let backend = match lb.select() {
-            Some(b) => b,
+            Some(b) => {
+                warned_no_backend.store(false, Ordering::Relaxed);
+                b
+            }
             None => {
-                if attempt == 0 {
+                if attempt == 0 && !warned_no_backend.swap(true, Ordering::Relaxed) {
                     push_log("WARN", "有客户端连接但无可用后端");
                 }
-                return Err(io::Error::new(io::ErrorKind::NotFound, "无可用后端"));
+                return Err(io::ErrorKind::NotConnected.into());
             }
         };
 
@@ -165,7 +170,7 @@ async fn handle_client(
         }
     }
 
-    Err(io::Error::new(io::ErrorKind::NotConnected, "所有后端连接尝试均失败"))
+    Err(io::ErrorKind::NotConnected.into())
 }
 
 pub async fn run_forward(
@@ -176,8 +181,9 @@ pub async fn run_forward(
     cancel_token: CancellationToken,
 ) -> io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
+    let warned_no_backend = Arc::new(AtomicBool::new(false));
 
-    push_log("INFO", &format!("转发服务 {} (TLS:{}, HTTP:{})", 
+    push_log("INFO", &format!("转发服务 {} (TLS:{}, HTTP:{})",
         addr, tls_port, http_port));
 
     loop {
@@ -186,8 +192,9 @@ pub async fn run_forward(
                 match accept_result {
                     Ok((client, _)) => {
                         let lb = lb.clone();
+                        let warned_no_backend = warned_no_backend.clone();
                         tokio::spawn(async move {
-                            if let Err(_e) = handle_client(client, lb, tls_port, http_port).await {}
+                            if let Err(_e) = handle_client(client, lb, tls_port, http_port, warned_no_backend).await {}
                         });
                     }
                     Err(e) if e.raw_os_error() == Some(24) => {
