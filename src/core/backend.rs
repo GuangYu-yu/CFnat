@@ -140,6 +140,11 @@ impl Backend {
         *self.entered_state_at.lock() = Instant::now();
     }
 
+    pub fn reset_metrics(&self) {
+        self.sample_count.store(0, Ordering::Relaxed);
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+    }
+
     pub fn record_success(&self) {
         self.consecutive_failures.store(0, Ordering::Relaxed);
     }

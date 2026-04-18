@@ -193,6 +193,16 @@ impl LoadBalancer {
         }
     }
 
+    pub fn reset_all_metrics(&self) {
+        let inner = self.inner.read();
+        for backend in inner.primary.iter() {
+            backend.reset_metrics();
+        }
+        for backend in inner.backup.iter() {
+            backend.reset_metrics();
+        }
+    }
+
     pub fn with_max_sticky_slots(mut self, max_sticky_slots: usize) -> Self {
         self.max_sticky_slots = max_sticky_slots;
         self
@@ -650,7 +660,7 @@ impl LoadBalancer {
             let mut primary_interval = tokio::time::interval(Duration::from_secs(120));
             primary_interval.tick().await;
 
-            let mut last_tick = Instant::now();
+            let mut last_tick = std::time::SystemTime::now();
             const TIME_JUMP_THRESHOLD: Duration = Duration::from_secs(60);
 
             loop {
@@ -663,10 +673,11 @@ impl LoadBalancer {
                     _ = primary_interval.tick() => true,
                 };
 
-                let now = Instant::now();
-                if now.duration_since(last_tick) > TIME_JUMP_THRESHOLD {
-                    push_log("INFO", "[健康检查] 检测到时间跳跃，重建 HTTP 客户端");
+                let now = std::time::SystemTime::now();
+                if now.duration_since(last_tick).unwrap_or_default() > TIME_JUMP_THRESHOLD {
+                    push_log("INFO", "[健康检查] 检测到时间跳跃，重建客户端并重置后端指标");
                     lb.rebuild_client();
+                    lb.reset_all_metrics();
                 }
                 last_tick = now;
 
