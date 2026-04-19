@@ -44,7 +44,7 @@ pub async fn start_service(
 }
 
 pub async fn stop_service(State(state): State<AppState>) -> Json<ApiResponse> {
-    match state.service.stop() {
+    match state.service.stop().await {
         Ok(_) => Json(ApiResponse {
             success: true,
             message: "服务已停止".to_string(),

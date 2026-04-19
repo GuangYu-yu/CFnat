@@ -260,30 +260,24 @@ impl ServiceState {
         Ok(())
     }
 
-    pub fn stop(&self) -> Result<(), String> {
+    pub async fn stop(&self) -> Result<(), String> {
         if !self.is_running() {
             return Err("服务未运行".to_string());
         }
 
-        // 先取消 ServiceState 的 CancellationToken，让 forward 和 httping 任务收到停止信号
         if let Some(token) = self.cancel_token.read().as_ref() {
             token.cancel();
         }
 
-        // 再取消 LoadBalancer 自己的 CancellationToken，让健康检查和 sticky 维护器退出
         if let Some(lb) = self.loadbalancer.read().as_ref() {
             lb.stop();
         }
         
         self.running.store(false, Ordering::Relaxed);
 
-        // 等待所有已注册的任务退出（带超时）
         let handles: Vec<JoinHandle<()>> = self.task_handles.write().drain(..).collect();
         for handle in handles {
-            let rt = tokio::runtime::Handle::try_current();
-            if let Ok(rt) = rt {
-                let _ = rt.block_on(tokio::time::timeout(Duration::from_secs(3), handle));
-            }
+            let _ = tokio::time::timeout(Duration::from_secs(3), handle).await;
         }
 
         *self.ip_pool.write() = None;
