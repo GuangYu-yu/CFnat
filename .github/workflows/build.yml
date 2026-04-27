@@ -133,7 +133,7 @@ jobs:
 
   build:
     name: 构建 ${{ matrix.os }}_${{ matrix.arch }}
-    needs: [matrix]
+    needs: [matrix, build_flutter_web]
     if: ${{ needs.matrix.outputs.include != '[]' }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -159,8 +159,7 @@ jobs:
       - name: 安装 Zig
         uses: mlugg/setup-zig@v2
         with:
-#          version: master
-          version: 0.15.2
+          version: master
 
       - name: 安装 MUSL (Linux)
         if: startsWith(matrix.os, 'Linux') && contains(matrix.target, 'musl')
