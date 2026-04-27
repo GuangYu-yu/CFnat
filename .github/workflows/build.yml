@@ -48,10 +48,18 @@ on:
         description: '编译 MacOS ARM64 版本'
         type: boolean
         default: true
+      web_ui:
+        description: 'Web 界面'
+        type: choice
+        options:
+          - Flutter
+          - HTML
+        default: Flutter
 
 jobs:
   build_flutter_web:
     name: 构建 Flutter Web
+    if: ${{ inputs.web_ui == 'Flutter' }}
     runs-on: ubuntu-latest
     env:
       APP_PACKAGE_NAME: cfnat_manager
@@ -125,7 +133,7 @@ jobs:
 
   build:
     name: 构建 ${{ matrix.os }}_${{ matrix.arch }}
-    needs: [build_flutter_web, matrix]
+    needs: [matrix]
     if: ${{ needs.matrix.outputs.include != '[]' }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -137,6 +145,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: 下载 Flutter Web 产物
+        if: ${{ inputs.web_ui == 'Flutter' }}
         uses: actions/download-artifact@v4
         with:
           name: flutter-web
@@ -169,9 +178,13 @@ jobs:
 
       - name: 构建二进制
         run: |
+          FEATURES="web"
+          if [[ "${{ inputs.web_ui }}" == "Flutter" ]]; then
+            FEATURES="web,flutter-web"
+          fi
           cargo install --locked cargo-zigbuild
           cargo update
-          cargo zigbuild --release --features web --target ${{ matrix.target }} || cargo build --release --features web --target ${{ matrix.target }}
+          cargo zigbuild --release --features "$FEATURES" --target ${{ matrix.target }} || cargo build --release --features "$FEATURES" --target ${{ matrix.target }}
 
       - name: 保存构建产物
         run: |

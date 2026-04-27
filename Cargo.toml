@@ -14,6 +14,7 @@ path = "src/bin/cfnat.rs"
 [features]
 default = []
 web = ["axum", "tower-http", "rust-embed", "serde_json"]
+flutter-web = ["web"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }

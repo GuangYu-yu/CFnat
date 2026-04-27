@@ -70,6 +70,8 @@ impl From<&StartRequest> for crate::core::types::ConfigOverrides {
             colo: req.colo.clone(),
             addr: req.addr,
             max_sticky_slots: req.max_sticky_slots,
+            #[cfg(feature = "web")]
+            api_addr: None,
         }
     }
 }
@@ -111,7 +113,12 @@ pub struct ApiResponse {
     pub message: String,
 }
 
-#[cfg(feature = "web")]
+#[cfg(all(feature = "web", not(feature = "flutter-web")))]
+#[derive(RustEmbed)]
+#[folder = "web"]
+struct Assets;
+
+#[cfg(all(feature = "web", feature = "flutter-web"))]
 #[derive(RustEmbed)]
 #[folder = "flutter/build/web"]
 struct Assets;

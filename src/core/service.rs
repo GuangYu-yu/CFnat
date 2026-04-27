@@ -32,6 +32,8 @@ pub struct ServiceConfig {
     pub colo: Option<Vec<String>>,
     pub addr: SocketAddr,
     pub max_sticky_slots: usize,
+    #[cfg(feature = "web")]
+    pub api_addr: Option<SocketAddr>,
 }
 
 impl ServiceConfig {
@@ -47,6 +49,8 @@ impl ServiceConfig {
         if let Some(v) = &overrides.colo { self.colo = Some(v.clone()); }
         if let Some(v) = overrides.addr { self.addr = v; }
         if let Some(v) = overrides.max_sticky_slots { self.max_sticky_slots = v; }
+        #[cfg(feature = "web")]
+        if let Some(v) = overrides.api_addr { self.api_addr = Some(v); }
     }
 }
 
@@ -64,6 +68,8 @@ impl Default for ServiceConfig {
             colo: None,
             addr: "127.6.6.6:1234".parse().unwrap(),
             max_sticky_slots: 5,
+            #[cfg(feature = "web")]
+            api_addr: None,
         }
     }
 }
