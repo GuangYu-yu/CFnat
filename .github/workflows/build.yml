@@ -184,6 +184,7 @@ jobs:
           cargo install --locked cargo-zigbuild
           cargo update
           cargo zigbuild --release --features "$FEATURES" --target ${{ matrix.target }} || cargo build --release --features "$FEATURES" --target ${{ matrix.target }}
+        shell: bash
 
       - name: 保存构建产物
         run: |
