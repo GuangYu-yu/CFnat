@@ -147,7 +147,7 @@ pub fn start_service(
 #[frb]
 pub fn stop_service() -> bool {
     let service = get_service();
-    service.stop().is_ok()
+    get_runtime().block_on(service.stop()).is_ok()
 }
 
 #[frb]
