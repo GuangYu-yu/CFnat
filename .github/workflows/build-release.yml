@@ -279,21 +279,13 @@ jobs:
           channel: 'master'
           cache: true
 
-      - name: 安装 Zig
-        if: steps.check_enabled.outputs.enabled == 'true' && matrix.arch == 'x64'
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.2
-
       - name: 安装 LLVM
         if: steps.check_enabled.outputs.enabled == 'true'
         run: choco install llvm -y
 
-      - name: 安装 cargo-zigbuild 和 flutter_rust_bridge (x64)
+      - name: 安装 flutter_rust_bridge (x64)
         if: steps.check_enabled.outputs.enabled == 'true' && matrix.arch == 'x64'
-        run: |
-          cargo install --locked cargo-zigbuild
-          cargo install flutter_rust_bridge_codegen
+        run: cargo install flutter_rust_bridge_codegen
 
       - name: 安装 flutter_rust_bridge (ARM64)
         if: steps.check_enabled.outputs.enabled == 'true' && matrix.arch == 'arm64'
@@ -336,7 +328,7 @@ jobs:
         if: steps.check_enabled.outputs.enabled == 'true' && matrix.arch == 'x64'
         run: |
           cd flutter/rust
-          cargo zigbuild --release --target ${{ matrix.rust_target }} || cargo build --release --target ${{ matrix.rust_target }}
+          cargo build --release --target ${{ matrix.rust_target }}
 
       - name: 编译 Rust 库 (ARM64)
         if: steps.check_enabled.outputs.enabled == 'true' && matrix.arch == 'arm64'
@@ -492,7 +484,7 @@ jobs:
         if: steps.check_enabled.outputs.enabled == 'true' && matrix.use_zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.15.2
+          version: master
 
       - name: 安装系统依赖
         if: steps.check_enabled.outputs.enabled == 'true'
@@ -539,7 +531,7 @@ jobs:
         if: steps.check_enabled.outputs.enabled == 'true' && matrix.use_zig
         run: |
           cd flutter/rust
-          cargo zigbuild --release --target ${{ matrix.rust_target }} || cargo build --release --target ${{ matrix.rust_target }}
+          cargo zigbuild --release --target ${{ matrix.rust_target }}
 
       - name: 编译 Rust 库 (ARM64)
         if: steps.check_enabled.outputs.enabled == 'true' && '!matrix.use_zig'
@@ -689,7 +681,7 @@ jobs:
         if: steps.check_enabled.outputs.enabled == 'true'
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.15.2
+          version: master
 
       - name: 安装 LLVM
         if: steps.check_enabled.outputs.enabled == 'true'
@@ -737,7 +729,7 @@ jobs:
         if: steps.check_enabled.outputs.enabled == 'true'
         run: |
           cd flutter/rust
-          cargo zigbuild --release --target ${{ matrix.rust_target }} || cargo build --release --target ${{ matrix.rust_target }}
+          cargo zigbuild --release --target ${{ matrix.rust_target }}
 
       - name: 构建 macOS
         if: steps.check_enabled.outputs.enabled == 'true'
