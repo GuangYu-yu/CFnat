@@ -65,8 +65,8 @@ jobs:
           [[ "${{ inputs.build_linux_arm64 }}" == true ]] && arr+=('{"os":"Linux","arch":"ARM64","target":"aarch64-unknown-linux-musl","runner":"ubuntu-latest","bin":"${{ inputs.project_name }}"}')
           [[ "${{ inputs.build_linux_amd64_gnu }}" == true ]] && arr+=('{"os":"Linux","arch":"AMD64_GNU","target":"x86_64-unknown-linux-gnu","runner":"ubuntu-latest","bin":"${{ inputs.project_name }}"}')
           [[ "${{ inputs.build_linux_arm64_gnu }}" == true ]] && arr+=('{"os":"Linux","arch":"ARM64_GNU","target":"aarch64-unknown-linux-gnu","runner":"ubuntu-latest","bin":"${{ inputs.project_name }}"}')
-          [[ "${{ inputs.build_macos_amd64 }}" == true ]] && arr+=('{"os":"MacOS","arch":"AMD64","target":"x86_64-apple-darwin","runner":"macos-latest","bin":"${{ inputs.project_name }}"}')
-          [[ "${{ inputs.build_macos_arm64 }}" == true ]] && arr+=('{"os":"MacOS","arch":"ARM64","target":"aarch64-apple-darwin","runner":"macos-latest","bin":"${{ inputs.project_name }}"}')
+          [[ "${{ inputs.build_macos_amd64 }}" == true ]] && arr+=('{"os":"MacOS","arch":"AMD64","target":"x86_64-apple-darwin","runner":"ubuntu-latest","bin":"${{ inputs.project_name }}"}')
+          [[ "${{ inputs.build_macos_arm64 }}" == true ]] && arr+=('{"os":"MacOS","arch":"ARM64","target":"aarch64-apple-darwin","runner":"ubuntu-latest","bin":"${{ inputs.project_name }}"}')
           echo "include=[$(IFS=,; echo "${arr[*]}")]" >> $GITHUB_OUTPUT
 
   build:
@@ -90,27 +90,18 @@ jobs:
       - name: 安装 Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.15.2
-
-      - name: 安装 MUSL (Linux)
-        if: startsWith(matrix.os, 'Linux') && contains(matrix.target, 'musl')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-          rustup target add ${{ matrix.target }}
-
-      - name: 安装 GNU 依赖 (Linux)
-        if: startsWith(matrix.os, 'Linux') && contains(matrix.target, 'gnu')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu
-          rustup target add ${{ matrix.target }}
+          version: master
 
       - name: 构建纯 CLI 二进制
         run: |
-          cargo install --locked cargo-zigbuild
           cargo update
-          cargo zigbuild --release --target ${{ matrix.target }} || cargo build --release --target ${{ matrix.target }}
+          if [[ "${{ matrix.os }}" == "Windows" ]]; then
+            cmd="build"
+          else
+            cargo install --locked cargo-zigbuild
+            cmd="zigbuild"
+          fi
+          cargo $cmd --release --target ${{ matrix.target }}
 
       - name: 保存构建产物
         run: |
@@ -127,20 +118,20 @@ jobs:
   strip_binaries:
     name: Strip 二进制
     needs: [matrix, build]
-    if: ${{ needs.matrix.outputs.include != '[]' && needs.build.result == 'success' }}
-    runs-on: windows-latest
+    if: ${{ needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: stripped_artifacts/
-          pattern: '*_*'
+      - name: Install llvm-strip
+        run: sudo apt-get update && sudo apt-get install -y llvm
       - name: Strip
         run: |
-          Get-ChildItem -Recurse -File stripped_artifacts -Include *.exe, ${{ github.event.inputs.project_name }} | ForEach-Object {
-            Write-Host "Stripping $($_.FullName)"
-            & "llvm-strip" $_.FullName
-          }
-        shell: pwsh
+          find stripped_artifacts -type f \( -name '*.exe' -o -name '${{ github.event.inputs.project_name }}' \) | while read f; do
+            echo "Stripping $f"
+            llvm-strip "$f"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: stripped_artifacts
@@ -149,7 +140,7 @@ jobs:
   upload_to_repo:
     name: 上传二进制到仓库
     needs: [matrix, strip_binaries]
-    if: ${{ needs.matrix.outputs.include != '[]' && github.event.inputs.upload_to_repo == 'true' }}
+    if: ${{ github.event.inputs.upload_to_repo == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -169,7 +160,7 @@ jobs:
   create_release:
     name: 创建发布
     needs: [matrix, strip_binaries]
-    if: ${{ needs.matrix.outputs.include != '[]' && github.event.inputs.create_release == 'true' }}
+    if: ${{ github.event.inputs.create_release == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -181,31 +172,20 @@ jobs:
 
       - name: 打包发布文件
         run: |
+          shopt -s nullglob
           mkdir -p release
           for dir in artifacts/*/; do
-            if [ -d "$dir" ]; then
-              platform=$(basename "$dir")
-              os=$(echo "$platform" | cut -d'_' -f1 | tr '[:upper:]' '[:lower:]')
-              arch=$(echo "$platform" | cut -d'_' -f2 | tr '[:upper:]' '[:lower:]')
-              if [[ "$platform" == *"GNU"* ]]; then
-                suffix="_gnu"
-              else
-                suffix=""
-              fi
-              mkdir -p tmp_$platform
-              cp "$dir"/* tmp_$platform/ 2>/dev/null || echo "警告: $dir 中没有文件"
-              cd tmp_$platform
-              if [ -n "$(ls -A .)" ]; then
-                if [[ "$os" == "windows" ]]; then
-                  zip -r "../release/${{ inputs.project_name }}_CLI_${os}_${arch}${suffix}.zip" .
-                else
-                  tar -czf "../release/${{ inputs.project_name }}_CLI_${os}_${arch}${suffix}.tar.gz" .
-                fi
-              else
-                echo "跳过空目录: $dir"
-              fi
-              cd ..
-              rm -rf tmp_$platform
+            platform=$(basename "$dir")
+            IFS='_' read -r os arch suffix <<< "$platform"
+            os=$(echo "$os" | tr '[:upper:]' '[:lower:]')
+            arch=$(echo "$arch" | tr '[:upper:]' '[:lower:]')
+            suffix="${suffix:+_${suffix}}"
+
+            name="${{ inputs.project_name }}_CLI_${os}_${arch}${suffix}"
+            if [[ "$os" == "windows" ]]; then
+              zip -rj "release/${name}.zip" "$dir"
+            else
+              tar -czf "release/${name}.tar.gz" -C "$dir" .
             fi
           done
 
