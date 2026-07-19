@@ -78,7 +78,7 @@ fn generate_refined_random(obj_addr: usize) -> u128 {
     lo = lo.rotate_left(usize::BITS / 2);
     lo = lo.swap_bytes();
 
-    let mut hi = lo.wrapping_mul(0x9E3779B97F4A7C15_usize);
+    let mut hi = lo.wrapping_mul(0x9E3779B97F4A7C15_u64 as usize);
     hi = hi.rotate_left(usize::BITS / 4);
     hi = hi.swap_bytes();
     hi ^= s;
