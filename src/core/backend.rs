@@ -15,6 +15,7 @@ enum BackendState {
     Removed = 3,
 }
 
+#[derive(Debug)]
 pub struct Backend {
     pub addr: SocketAddr,
     pub colo: Mutex<Option<String>>,
@@ -25,6 +26,7 @@ pub struct Backend {
     state: AtomicU8,
     entered_state_at: Mutex<Instant>,
     consecutive_failures: AtomicU32,
+    fast_fail_count: AtomicU32,
 }
 
 impl Backend {
@@ -39,6 +41,7 @@ impl Backend {
             state: AtomicU8::new(BackendState::Warming as u8),
             entered_state_at: Mutex::new(Instant::now()),
             consecutive_failures: AtomicU32::new(0),
+            fast_fail_count: AtomicU32::new(0),
         }
     }
 
@@ -49,10 +52,11 @@ impl Backend {
             connections: AtomicUsize::new(0),
             avg_delay: AtomicU32::new(initial_delay.to_bits()),
             avg_loss: AtomicU32::new(initial_loss.to_bits()),
-            sample_count: AtomicUsize::new(0),
+            sample_count: AtomicUsize::new(1),
             state: AtomicU8::new(BackendState::Warming as u8),
             entered_state_at: Mutex::new(Instant::now()),
             consecutive_failures: AtomicU32::new(0),
+            fast_fail_count: AtomicU32::new(0),
         }
     }
 
@@ -67,28 +71,28 @@ impl Backend {
     pub fn record_delay(&self, delay_ms: f32) {
         let is_first = self.sample_count.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
             Some(if count == 0 { 1 } else { (count + 1).min(get_global_config().sample_window as usize) })
-        }).map(|old| old == 0).unwrap_or(false);
+        }).map(|old| old == 0).unwrap();
         
         let alpha = get_global_config().alpha;
-        self.avg_delay.fetch_update(Ordering::AcqRel, Ordering::Acquire, |bits| {
+        let _ = self.avg_delay.fetch_update(Ordering::AcqRel, Ordering::Acquire, |bits| {
             let current = f32::from_bits(bits);
             let new_val = if is_first { delay_ms } else { (current * (1.0 - alpha)) + (delay_ms * alpha) };
             Some(new_val.to_bits())
-        }).ok();
+        });
     }
 
     pub fn record_loss(&self, is_loss: bool) {
         let is_first = self.sample_count.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
             Some(if count == 0 { 1 } else { (count + 1).min(get_global_config().sample_window as usize) })
-        }).map(|old| old == 0).unwrap_or(false);
+        }).map(|old| old == 0).unwrap();
         
         let alpha = get_global_config().alpha;
         let loss = if is_loss { 1.0 } else { 0.0 };
-        self.avg_loss.fetch_update(Ordering::AcqRel, Ordering::Acquire, |bits| {
+        let _ = self.avg_loss.fetch_update(Ordering::AcqRel, Ordering::Acquire, |bits| {
             let current = f32::from_bits(bits);
             let new_val = if is_first { loss } else { (current * (1.0 - alpha)) + (loss * alpha) };
             Some(new_val.to_bits())
-        }).ok();
+        });
     }
 
     pub fn get_avg_delay(&self) -> f32 {
@@ -120,8 +124,11 @@ impl Backend {
     }
 
     pub fn is_selectable(&self) -> bool {
-        let state = self.state.load(Ordering::Relaxed);
-        state == BackendState::Active as u8 || state == BackendState::Warming as u8
+        match self.state.load(Ordering::Relaxed) {
+            s if s == BackendState::Active as u8 => true,
+            s if s == BackendState::Warming as u8 => self.sample_count.load(Ordering::Relaxed) > 0,
+            _ => false,
+        }
     }
 
     pub fn mark_removed(&self) {
@@ -157,6 +164,18 @@ impl Backend {
         self.consecutive_failures.load(Ordering::Relaxed)
     }
 
+    pub fn record_fast_fail(&self) {
+        self.fast_fail_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn reset_fast_fail(&self) {
+        self.fast_fail_count.store(0, Ordering::Relaxed);
+    }
+
+    pub fn get_fast_fail_count(&self) -> u32 {
+        self.fast_fail_count.load(Ordering::Relaxed)
+    }
+
     pub fn check_warming_expired(&self) -> bool {
         if self.is_warming() {
             let elapsed = self.entered_state_at.lock().elapsed().as_secs();
@@ -166,17 +185,25 @@ impl Backend {
         }
     }
 
-    pub fn calculate_score(&self, pool_avg_delay: f32, pool_avg_loss: f32) -> f32 {
-        let connections = self.connections.load(Ordering::Relaxed) as f32;
-        let beta = (self.get_sample_count() as f32 / get_global_config().sample_window).min(1.0);
-        
-        let my_perf = self.get_avg_delay() * (1.0 + self.get_loss_rate() * 2.0);
-        let pool_perf = (pool_avg_delay * (1.0 + pool_avg_loss * 2.0)).max(1.0);
-        
-        let ratio = if pool_perf > 0.0 { my_perf / pool_perf } else { 1.0 };
-        let smooth_ratio = (1.0 + beta * (ratio - 1.0)).min(get_global_config().max_smooth_ratio);
-        
-        (connections + 1.0) * smooth_ratio
+    /// 延迟差值超过此阈值才认为有显著差异（毫秒）
+    const DELAY_COMPARE_THRESHOLD: f32 = 20.0;
+    /// 丢包率差值超过此阈值才认为有显著差异
+    const LOSS_COMPARE_THRESHOLD: f32 = 0.01;
+
+    pub fn cmp_eviction(a: &Backend, b: &Backend) -> std::cmp::Ordering {
+        // 级联淘汰比较：Less = a 比 b 差（优先淘汰 a）
+        // 延迟高的优先淘汰，延迟接近则丢包高的淘汰，都接近则连接数少的淘汰
+        let da = a.get_avg_delay();
+        let db = b.get_avg_delay();
+        if (da - db).abs() > Self::DELAY_COMPARE_THRESHOLD {
+            return db.total_cmp(&da);
+        }
+        let la = a.get_loss_rate();
+        let lb = b.get_loss_rate();
+        if (la - lb).abs() > Self::LOSS_COMPARE_THRESHOLD {
+            return lb.total_cmp(&la);
+        }
+        a.connections().cmp(&b.connections())
     }
 
     pub fn connections(&self) -> usize {

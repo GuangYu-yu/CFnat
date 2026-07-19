@@ -2,11 +2,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CancellationToken {
     inner: Arc<Inner>,
 }
 
+#[derive(Debug)]
 struct Inner {
     cancelled: AtomicBool,
     notifier: Notify,

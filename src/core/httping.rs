@@ -43,7 +43,7 @@ async fn single_ping(
     Some((delay, colo))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PingConfig {
     pub tls_port: u16,
     pub http_port: u16,
@@ -121,17 +121,6 @@ pub async fn http_ping_multi(
     })
 }
 
-pub async fn http_ping_multi_legacy(
-    ip: std::net::IpAddr,
-    config: &PingConfig,
-) -> Option<(SocketAddr, f32, Option<String>, u8)> {
-    let result = http_ping_multi(ip, config).await?;
-    if result.colo_mismatch {
-        return None;
-    }
-    Some((result.addr, result.delay, result.colo, result.success_count))
-}
-
 pub struct HttpingConfig {
     pub tls_port: u16,
     pub http_port: u16,
@@ -179,13 +168,13 @@ pub async fn run_continuous_httping(
     let mut result_cache: VecDeque<(SocketAddr, f32, Option<String>, u8)> = VecDeque::new();
 
     let try_fill_from_cache = |cache: &mut VecDeque<(SocketAddr, f32, Option<String>, u8)>| {
-        while let Some((addr, delay, colo, _success_count)) = cache.pop_front() {
+        while let Some((addr, delay, colo, success_count)) = cache.pop_front() {
             let result = lb.try_add_backend(addr, delay, colo.as_deref());
             
             match result {
                 AddResult::AddedToPrimary | AddResult::AddedToBackup => {}
                 AddResult::QueueFull | AddResult::AlreadyExists => {
-                    cache.push_front((addr, delay, colo, _success_count));
+                    cache.push_front((addr, delay, colo, success_count));
                     return;
                 }
             }
@@ -231,7 +220,7 @@ pub async fn run_continuous_httping(
             }
             result = tasks.join_next() => {
                 if let Some(Ok(result)) = result
-                    && let Some((addr, delay, colo, _success_count, colo_mismatch)) = result
+                    && let Some((addr, delay, colo, success_count, colo_mismatch)) = result
                     && !colo_mismatch
                     && delay <= config.delay_limit as f32
                 {
@@ -240,7 +229,7 @@ pub async fn run_continuous_httping(
                     if let AddResult::QueueFull = add_result
                         && result_cache.len() < get_global_config().sample_window as usize
                     {
-                        result_cache.push_back((addr, delay, colo, _success_count));
+                        result_cache.push_back((addr, delay, colo, success_count));
                     }
                 }
             }

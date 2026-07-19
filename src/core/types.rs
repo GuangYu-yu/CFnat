@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::net::SocketAddr;
 
-#[derive(Serialize, Clone, PartialEq)]
+#[derive(Serialize, Clone, PartialEq, Debug)]
 pub struct IpInfo {
     pub ip: String,
     pub colo: Option<String>,
@@ -22,7 +22,7 @@ impl IpInfo {
     }
 }
 
-#[derive(Serialize, Clone, PartialEq)]
+#[derive(Serialize, Clone, PartialEq, Debug)]
 pub struct StatusInfo {
     pub version: u64,
     pub running: bool,

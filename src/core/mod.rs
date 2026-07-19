@@ -9,7 +9,6 @@ pub mod loadbalancer;
 pub mod pool;
 pub mod service;
 pub mod types;
-pub mod utils;
 
 pub use backend::Backend;
 pub use cancel::CancellationToken;

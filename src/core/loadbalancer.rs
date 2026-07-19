@@ -10,16 +10,16 @@ use crate::core::backend::Backend;
 use crate::core::cancel::CancellationToken;
 use crate::core::config::get_global_config;
 use crate::core::httping::{PingConfig, PingResultDetail};
-use crate::core::utils;
 use crate::log::push_log;
 
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
+        .unwrap()
         .as_millis() as u64
 }
 
+#[derive(Debug)]
 struct StickySlot {
     backend: Arc<Backend>,
     last_switch: Instant,
@@ -34,11 +34,28 @@ struct HealthCheckConfig {
     loss_threshold: f32,
 }
 
+#[derive(Debug)]
 struct BalancerInner {
     primary: Vec<Arc<Backend>>,
     backup: Vec<Arc<Backend>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PoolType {
+    Primary,
+    Backup,
+}
+
+impl PoolType {
+    fn as_str(self) -> &'static str {
+        match self {
+            PoolType::Primary => "主队列",
+            PoolType::Backup => "备选",
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct LoadBalancer {
     inner: RwLock<BalancerInner>,
     ip_set: RwLock<HashSet<std::net::IpAddr>>,
@@ -265,17 +282,26 @@ impl LoadBalancer {
     }
 
     fn select_from_pool(&self, pool: &[Arc<Backend>], index: &AtomicUsize) -> Option<Arc<Backend>> {
-        let len = pool.len();
+        // 优先选正常后端，没有则保底选隔离的
+        let selectable: Vec<&Arc<Backend>> = pool.iter()
+            .filter(|b| b.is_selectable())
+            .collect();
+        let fallback: Vec<&Arc<Backend>> = pool.iter()
+            .filter(|b| b.is_isolated())
+            .collect();
+
+        let candidates = if !selectable.is_empty() { &selectable } else { &fallback };
+        let len = candidates.len();
         if len == 0 {
             return None;
         }
         
         if len == 1 {
-            pool[0].fetch_add_connection(1);
-            return Some(pool[0].clone());
+            candidates[0].fetch_add_connection(1);
+            return Some(candidates[0].clone());
         }
         
-        Self::select_by_connection(pool, index, |b| b.as_ref(), |b| b.clone(), |_| {})
+        Self::select_by_connection(candidates, index, |b| b.as_ref(), |b| (*b).clone(), |_| {})
     }
 
     fn select_by_connection<T>(
@@ -400,14 +426,6 @@ impl LoadBalancer {
         }
     }
 
-    fn calculate_pool_avg_delay(&self, pool: &[Arc<Backend>]) -> f32 {
-        utils::calculate_pool_avg_delay(pool)
-    }
-
-    fn calculate_pool_avg_loss(&self, pool: &[Arc<Backend>]) -> f32 {
-        utils::calculate_pool_avg_loss(pool)
-    }
-
     fn cleanup_removed(&self) {
         let mut inner = self.inner.write();
         
@@ -451,6 +469,10 @@ impl LoadBalancer {
     }
 
     pub fn check_and_evict(&self, backend: &Backend) -> bool {
+        if backend.is_isolated() || backend.is_removed() {
+            return false;
+        }
+
         let sample_count = backend.get_sample_count();
         
         if sample_count < get_global_config().evict_threshold {
@@ -488,16 +510,9 @@ impl LoadBalancer {
     fn evict_worst_and_refill(&self) {
         let mut inner = self.inner.write();
         
-        let pool_avg_delay = self.calculate_pool_avg_delay(&inner.primary);
-        let pool_avg_loss = self.calculate_pool_avg_loss(&inner.primary);
-        
         let worst = inner.primary.iter()
             .filter(|b| !b.is_removed())
-            .max_by(|a, b| {
-                let score_a = a.calculate_score(pool_avg_delay, pool_avg_loss);
-                let score_b = b.calculate_score(pool_avg_delay, pool_avg_loss);
-                score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
-            });
+            .min_by(|a, b| Backend::cmp_eviction(a, b));
         
         if let Some(worst_backend) = worst {
             let addr = worst_backend.addr;
@@ -615,13 +630,9 @@ impl LoadBalancer {
         }
     }
 
-    fn sort_backup(&self, pool_avg_delay: f32, pool_avg_loss: f32) {
+    fn sort_backup(&self) {
         let mut inner = self.inner.write();
-        inner.backup.sort_by(|a, b| {
-            let score_a = a.calculate_score(pool_avg_delay, pool_avg_loss);
-            let score_b = b.calculate_score(pool_avg_delay, pool_avg_loss);
-            score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        inner.backup.sort_by(|a, b| Backend::cmp_eviction(b, a));
     }
 
     pub fn start_health_check(self: Arc<Self>) {
@@ -649,15 +660,16 @@ impl LoadBalancer {
         };
 
         let current_ms = now_ms();
-        self.next_health_check_ms.store(current_ms + get_global_config().health_check_interval.as_millis() as u64, Ordering::Relaxed);
-        self.next_primary_health_check_ms.store(current_ms + 120_000, Ordering::Relaxed);
+        let hc = get_global_config().health_check_interval;
+        self.next_health_check_ms.store(current_ms + hc.as_millis() as u64, Ordering::Relaxed);
+        self.next_primary_health_check_ms.store(current_ms + hc.as_millis() as u64 * 4, Ordering::Relaxed);
 
         let lb = self.clone();
         tokio::spawn(async move {
             let mut backup_interval = tokio::time::interval(get_global_config().health_check_interval);
             backup_interval.tick().await;
             
-            let mut primary_interval = tokio::time::interval(Duration::from_secs(120));
+            let mut primary_interval = tokio::time::interval(get_global_config().health_check_interval.saturating_mul(4));
             primary_interval.tick().await;
 
             let mut last_tick = std::time::SystemTime::now();
@@ -693,10 +705,10 @@ impl LoadBalancer {
     fn run_health_check_for_pool(
         self: &Arc<Self>,
         config: HealthCheckConfig,
-        source: &str,
+        pool_type: PoolType,
         interval: Duration,
     ) {
-        let is_primary = source == "主队列";
+        let is_primary = pool_type == PoolType::Primary;
         
         let backends = {
             let mut inner = self.inner.write();
@@ -713,7 +725,7 @@ impl LoadBalancer {
         }
 
         let lb = self.clone();
-        let source_owned = source.to_string();
+        let pool_type_str = pool_type.as_str();
         let concurrency = get_global_config().health_check_concurrency;
         
         tokio::spawn(async move {
@@ -727,28 +739,27 @@ impl LoadBalancer {
 
                 let config = config.clone();
                 let lb = lb.clone();
-                let src = source_owned.clone();
 
                 join_set.spawn(async move {
                     let result = crate::core::httping::http_ping_multi(
                         backend.addr.ip(),
                         &config.ping_config,
                     ).await;
-                    (backend, result, config.delay_threshold, config.loss_threshold, lb, src)
+                    (backend, result, config.delay_threshold, config.loss_threshold, lb, pool_type)
                 });
 
                 if join_set.len() >= concurrency
                     && let Some(res) = join_set.join_next().await
-                    && let Ok((backend, result, delay_threshold, loss_threshold, lb, src)) = res
-                    && Self::handle_health_check_result(backend, result, delay_threshold, loss_threshold, lb, &src)
+                    && let Ok((backend, result, delay_threshold, loss_threshold, lb, pt)) = res
+                    && Self::handle_health_check_result(backend, result, delay_threshold, loss_threshold, lb, pt)
                 {
                     removed_count += 1;
                 }
             }
 
             while let Some(res) = join_set.join_next().await
-                && let Ok((backend, result, delay_threshold, loss_threshold, lb, src)) = res
-                && Self::handle_health_check_result(backend, result, delay_threshold, loss_threshold, lb, &src)
+                && let Ok((backend, result, delay_threshold, loss_threshold, lb, pt)) = res
+                && Self::handle_health_check_result(backend, result, delay_threshold, loss_threshold, lb, pt)
             {
                 removed_count += 1;
             }
@@ -756,7 +767,7 @@ impl LoadBalancer {
             lb.cleanup_removed();
             
             if removed_count > 0 {
-                push_log("INFO", &format!("[{}] 检查完成，移除 {} 个", source_owned, removed_count));
+                push_log("INFO", &format!("[{}] 检查完成，移除 {} 个", pool_type_str, removed_count));
             }
             
             let current_ms = now_ms();
@@ -764,22 +775,18 @@ impl LoadBalancer {
                 lb.refill_from_backup();
                 lb.next_primary_health_check_ms.store(current_ms + interval.as_millis() as u64, Ordering::Relaxed);
             } else {
-                let inner = lb.inner.read();
-                let pool_avg_delay = lb.calculate_pool_avg_delay(&inner.backup);
-                let pool_avg_loss = lb.calculate_pool_avg_loss(&inner.backup);
-                drop(inner);
-                lb.sort_backup(pool_avg_delay, pool_avg_loss);
+                lb.sort_backup();
                 lb.next_health_check_ms.store(current_ms + interval.as_millis() as u64, Ordering::Relaxed);
             }
         });
     }
 
     fn run_backup_health_check(self: &Arc<Self>, config: HealthCheckConfig) {
-        self.run_health_check_for_pool(config, "备选", get_global_config().health_check_interval);
+        self.run_health_check_for_pool(config, PoolType::Backup, get_global_config().health_check_interval);
     }
 
     fn run_primary_health_check(self: &Arc<Self>, config: HealthCheckConfig) {
-        self.run_health_check_for_pool(config, "主队列", Duration::from_secs(120));
+        self.run_health_check_for_pool(config, PoolType::Primary, Duration::from_secs(120));
     }
 
     fn handle_health_check_result(
@@ -788,9 +795,9 @@ impl LoadBalancer {
         delay_threshold: f32,
         loss_threshold: f32,
         lb: Arc<LoadBalancer>,
-        source: &str,
+        pool_type: PoolType,
     ) -> bool {
-        let is_primary = source == "主队列";
+        let is_primary = pool_type == PoolType::Primary;
 
         enum Action {
             None,
@@ -813,7 +820,11 @@ impl LoadBalancer {
                 if backend.get_sample_count() < get_global_config().sample_window as usize {
                     Action::None
                 } else if backend.get_avg_delay() > delay_threshold || backend.get_loss_rate() > loss_threshold {
-                    if is_primary { Action::Isolate } else { Action::Remove("性能不达标".into()) }
+                    if backend.is_isolated() || !is_primary {
+                        Action::Remove("隔离后仍不达标".into())
+                    } else {
+                        Action::Isolate
+                    }
                 } else {
                     Action::Recover
                 }
@@ -827,7 +838,11 @@ impl LoadBalancer {
                 let over_limit = loss_rate > loss_threshold || failures >= 3;
 
                 if backend.get_sample_count() >= get_global_config().sample_window as usize && over_limit {
-                    if is_primary { Action::Isolate } else { Action::Remove("无响应".into()) }
+                    if backend.is_isolated() || !is_primary {
+                        Action::Remove("无响应".into())
+                    } else {
+                        Action::Isolate
+                    }
                 } else {
                     Action::None
                 }
