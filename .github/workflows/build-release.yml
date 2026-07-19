@@ -110,7 +110,6 @@ jobs:
       - name: 安装 Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.x'
           channel: 'stable'
 
       - name: 安装 Rust
@@ -269,7 +268,6 @@ jobs:
         if: steps.check_enabled.outputs.enabled == 'true' && matrix.arch == 'x64'
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.x'
           channel: 'stable'
 
       - name: 安装 Flutter (ARM64)
@@ -458,7 +456,6 @@ jobs:
         if: steps.check_enabled.outputs.enabled == 'true' && matrix.arch == 'x64'
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.x'
           channel: 'stable'
 
       - name: 安装 Flutter (ARM64)
@@ -668,7 +665,6 @@ jobs:
         if: steps.check_enabled.outputs.enabled == 'true'
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.x'
           channel: 'stable'
 
       - name: 安装 Rust
