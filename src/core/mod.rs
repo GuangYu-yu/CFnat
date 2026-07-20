@@ -8,6 +8,8 @@ pub mod ip;
 pub mod loadbalancer;
 pub mod pool;
 pub mod service;
+#[cfg(target_os = "linux")]
+pub mod splice;
 pub mod types;
 
 pub use backend::Backend;

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::io::{self, BufReader};
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -12,149 +12,181 @@ use crate::core::cancel::CancellationToken;
 use crate::core::loadbalancer::LoadBalancer;
 use crate::log::push_log;
 
-const READABLE_TIMEOUT_SECS: u64 = 10;
-const BUFFER_SIZE: usize = 128 * 1024;
+const READABLE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+const TLS_HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 
-fn is_tls(buf: &[u8]) -> bool {
-    !buf.is_empty() && buf[0] == 0x16
+#[inline]
+fn is_tls(first_byte: u8) -> bool {
+    first_byte == 0x16
+}
+
+async fn read_tls_client_hello(client: &mut TcpStream, first_byte: u8) -> io::Result<Vec<u8>> {
+    let mut header = [0u8; 4];
+    tokio::time::timeout(TLS_HELLO_TIMEOUT, client.read_exact(&mut header))
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+
+    let record_len = u16::from_be_bytes([header[2], header[3]]) as usize;
+
+    let mut body = vec![0u8; record_len];
+    tokio::time::timeout(TLS_HELLO_TIMEOUT, client.read_exact(&mut body))
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+
+    let mut full = Vec::with_capacity(1 + 4 + body.len());
+    full.push(first_byte);
+    full.extend_from_slice(&header);
+    full.extend_from_slice(&body);
+    Ok(full)
 }
 
 async fn transfer_direction(
-    reader: OwnedReadHalf,
+    mut reader: OwnedReadHalf,
     mut writer: OwnedWriteHalf,
-    record_metrics: Option<(Arc<LoadBalancer>, Arc<Backend>, Instant)>,
+    metrics: Option<(Arc<LoadBalancer>, Arc<Backend>, Instant)>,
 ) -> io::Result<()> {
-    if let Some((lb, backend, start)) = record_metrics {
-        match tokio::time::timeout(
-            Duration::from_secs(READABLE_TIMEOUT_SECS),
-            reader.readable()
-        ).await {
-            Ok(Ok(_)) => {
-                let delay = start.elapsed().as_secs_f32() * 1000.0;
-                lb.record_delay(&backend, delay);
-            }
-            Ok(Err(e)) => return Err(e),
-            Err(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!("后端 {} 秒无响应", READABLE_TIMEOUT_SECS)
-                ));
-            }
-        }
+    if let Some((lb, backend, start)) = metrics {
+        tokio::time::timeout(READABLE_TIMEOUT, reader.readable())
+            .await
+            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+        lb.record_delay(&backend, start.elapsed().as_secs_f32() * 1000.0);
     }
 
-    let mut buffered = BufReader::with_capacity(BUFFER_SIZE, reader);
-    io::copy(&mut buffered, &mut writer).await?;
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsRawFd;
+        let rfd = reader.as_raw_fd();
+        let wfd = writer.as_raw_fd();
+        tokio::task::spawn_blocking(move || {
+            let _reader = reader;
+            let _writer = writer;
+            crate::core::splice::transfer(rfd, wfd)
+        })
+        .await
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    io::copy(&mut reader, &mut writer).await?;
+
     Ok(())
 }
 
+async fn race_connect(
+    backends: &[Arc<Backend>],
+    port: u16,
+    lb: &Arc<LoadBalancer>,
+) -> Option<(Arc<Backend>, TcpStream)> {
+    let mut set: tokio::task::JoinSet<std::io::Result<(Arc<Backend>, Option<TcpStream>)>> =
+        tokio::task::JoinSet::new();
+    for b in backends {
+        let b = b.clone();
+        let addr = SocketAddr::new(b.addr.ip(), port);
+        let lb = lb.clone();
+        set.spawn(async move {
+            match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr)).await {
+                Ok(Ok(stream)) => Ok((b, Some(stream))),
+                _ => {
+                    lb.record_loss(&b, true);
+                    Ok((b, None))
+                }
+            }
+        });
+    }
+
+    let mut winner = None;
+    while let Some(res) = set.join_next().await {
+        if let Ok(Ok((b, Some(stream)))) = res {
+            winner = Some((b, stream));
+            break;
+        }
+    }
+    set.shutdown().await;
+    winner
+}
+
 async fn handle_client(
-    client: TcpStream,
+    mut client: TcpStream,
     lb: Arc<LoadBalancer>,
     tls_port: u16,
     http_port: u16,
-    warned_no_backend: Arc<AtomicBool>,
+    warned: Arc<AtomicBool>,
 ) -> io::Result<()> {
     let connect_start = Instant::now();
 
-    // 确定目标端口
-    let target_port = if tls_port == http_port {
-        tls_port
-    } else {
-        let mut buf = [0u8; 1];
-        let is_tls = match tokio::time::timeout(Duration::from_secs(5), client.peek(&mut buf)).await {
-            Ok(Ok(_)) => is_tls(&buf),
-            Ok(Err(e)) => return Err(e),
-            Err(_) => return Err(io::Error::new(io::ErrorKind::TimedOut, "peek 超时")),
-        };
-        if is_tls { tls_port } else { http_port }
-    };
+    let mut first = [0u8; 1];
+    let _ = tokio::time::timeout(TLS_HELLO_TIMEOUT, client.read(&mut first)).await;
 
-    // 选取最多 2 个后端
+    let tls = is_tls(first[0]);
+    let pending = if tls {
+        read_tls_client_hello(&mut client, first[0]).await?
+    } else {
+        first.to_vec()
+    };
+    let target_port = if tls { tls_port } else { http_port };
+
     let backends: Vec<Arc<Backend>> = (0..2).filter_map(|_| lb.select()).collect();
     if backends.is_empty() {
-        if !warned_no_backend.swap(true, Ordering::Relaxed) {
+        if !warned.swap(true, Ordering::Relaxed) {
             push_log("WARN", "有客户端连接但无可用后端");
         }
         return Err(io::ErrorKind::NotConnected.into());
     }
-    warned_no_backend.store(false, Ordering::Relaxed);
+    warned.store(false, Ordering::Relaxed);
 
-    // 并发连接竞速
-    let mut race: tokio::task::JoinSet<io::Result<(Arc<Backend>, TcpStream)>> = tokio::task::JoinSet::new();
-    for backend in &backends {
-        let backend = backend.clone();
-        let addr = SocketAddr::new(backend.addr.ip(), target_port);
-        race.spawn(async move {
-            let server = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
-                .await
-                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "连接超时"))??;
-            Ok((backend, server))
-        });
-    }
+    let winner = race_connect(&backends, target_port, &lb).await;
 
-    // 等待第一个成功的连接
-    let winner = loop {
-        match race.join_next().await {
-            Some(Ok(Ok((backend, server)))) => break Some((backend, server)),
-            Some(Ok(Err(_))) => continue,
-            Some(Err(_)) => continue,
-            None => break None,
+    let (backend, mut server) = match winner {
+        Some(w) => w,
+        None => {
+            for b in &backends {
+                lb.check_and_evict(b);
+                lb.release(b);
+            }
+            return Err(io::Error::from(io::ErrorKind::NotConnected));
         }
     };
-    race.shutdown().await;
 
-    // 处理连接结果
-    match winner {
-        Some((ref backend, server)) => {
-            // 释放未选中的后端
-            for b in &backends {
-                if !Arc::ptr_eq(b, backend) {
-                    lb.release(b);
-                }
-            }
-
-            // 配置连接
-            server.set_nodelay(true)?;
-            client.set_nodelay(true)?;
-
-            // 转发数据
-            let start = Instant::now();
-            let (client_read, client_write) = client.into_split();
-            let (server_read, server_write) = server.into_split();
-
-            let result = tokio::select! {
-                res = transfer_direction(server_read, client_write, Some((lb.clone(), backend.clone(), start))) => res,
-                res = transfer_direction(client_read, server_write, None) => res,
-            };
-
-            lb.check_and_evict(backend);
-            lb.release(backend);
-
-            let lifetime = connect_start.elapsed();
-            if result.is_err() && lifetime.as_millis() < 3000 {
-                backend.record_fast_fail();
-                if backend.get_fast_fail_count() >= 2 {
-                    push_log("WARN", &format!("[-] {} 连续快速断开，移除", backend.addr));
-                    backend.mark_removed();
-                }
-            } else if result.is_ok() {
-                backend.reset_fast_fail();
-            }
-
-            result
-        }
-        None => {
-            // 所有连接失败
-            for backend in &backends {
-                lb.record_loss(backend, true);
-                lb.check_and_evict(backend);
-                lb.release(backend);
-            }
-            Err(io::Error::new(io::ErrorKind::NotConnected, "全部连接失败"))
+    for b in &backends {
+        if !Arc::ptr_eq(b, &backend) {
+            lb.release(b);
         }
     }
+
+    server.set_nodelay(true)?;
+    client.set_nodelay(true)?;
+    server.write_all(&pending).await?;
+
+    let start = Instant::now();
+    let (cr, cw) = client.into_split();
+    let (sr, sw) = server.into_split();
+
+    let c2s = tokio::spawn(transfer_direction(cr, sw, None));
+    let s2c = tokio::spawn(transfer_direction(sr, cw, Some((lb.clone(), backend.clone(), start))));
+    let (r1, r2) = tokio::join!(c2s, s2c);
+
+    let result = match (r1, r2) {
+        (Ok(Ok(())), Ok(Ok(()))) => Ok(()),
+        (Ok(Err(e)), _) | (_, Ok(Err(e))) => Err(e),
+        (Err(_), _) | (_, Err(_)) => Err(io::Error::from(io::ErrorKind::Other)),
+    };
+
+    lb.check_and_evict(&backend);
+    lb.release(&backend);
+
+    let lifetime = connect_start.elapsed();
+    if result.is_err() && lifetime.as_millis() < 3000 {
+        backend.record_fast_fail();
+        if backend.get_fast_fail_count() >= 2 {
+            push_log("WARN", &format!("[-] {} 连续快速断开，移除", backend.addr));
+            backend.mark_removed();
+        }
+    } else if result.is_ok() {
+        backend.reset_fast_fail();
+    }
+
+    result
 }
 
 pub async fn run_forward(
@@ -165,25 +197,22 @@ pub async fn run_forward(
     cancel_token: CancellationToken,
 ) -> io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
-    let warned_no_backend = Arc::new(AtomicBool::new(false));
-
-    push_log("INFO", &format!("转发服务 {} (TLS:{}, HTTP:{})",
-        addr, tls_port, http_port));
+    let warned = Arc::new(AtomicBool::new(false));
+    push_log("INFO", &format!("转发服务 {} (TLS:{}, HTTP:{})", addr, tls_port, http_port));
 
     loop {
         tokio::select! {
-            accept_result = listener.accept() => {
-                match accept_result {
+            res = listener.accept() => {
+                match res {
                     Ok((client, _)) => {
                         let lb = lb.clone();
-                        let warned_no_backend = warned_no_backend.clone();
+                        let warned = warned.clone();
                         tokio::spawn(async move {
-                            if let Err(_e) = handle_client(client, lb, tls_port, http_port, warned_no_backend).await {}
+                            let _ = handle_client(client, lb, tls_port, http_port, warned).await;
                         });
                     }
                     Err(e) if e.raw_os_error() == Some(24) => {
                         tokio::time::sleep(Duration::from_millis(100)).await;
-                        continue;
                     }
                     Err(e) => return Err(e),
                 }
@@ -194,6 +223,5 @@ pub async fn run_forward(
             }
         }
     }
-
     Ok(())
 }
