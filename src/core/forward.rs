@@ -165,7 +165,9 @@ async fn handle_client(
     let lifetime = connect_start.elapsed();
     if result.is_err() && lifetime.as_millis() < 3000 {
         backend.record_fast_fail();
-        if backend.get_fast_fail_count() >= 2 {
+        if backend.get_fast_fail_count() >= 2
+            && lb.try_deactivate()
+        {
             push_log("WARN", &format!("[-] {} 连续快速断开，移除", backend.addr));
             backend.mark_removed();
         }

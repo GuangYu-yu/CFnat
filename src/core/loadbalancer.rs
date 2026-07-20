@@ -474,51 +474,43 @@ impl LoadBalancer {
         let loss_threshold = f32::from_bits(self.loss_threshold.load(Ordering::Relaxed));
 
         if avg_delay > delay_threshold || loss_rate > loss_threshold {
-            self.isolate_backend(backend);
-            push_log("WARN", &format!("[→] {} 进入隔离状态 (延迟{:.0}ms 丢包{:.0}%)", 
-                backend.addr, avg_delay, loss_rate * 100.0));
-            true
+            if self.try_deactivate() {
+                backend.mark_isolated();
+                push_log("WARN", &format!("[→] {} 进入隔离状态 (延迟{:.0}ms 丢包{:.0}%)", 
+                    backend.addr, avg_delay, loss_rate * 100.0));
+                true
+            } else {
+                false
+            }
         } else {
             false
         }
     }
 
-    fn isolate_backend(&self, backend: &Backend) {
-        let inner = self.inner.read();
-        let active_count = inner.primary.iter().filter(|b| b.is_selectable()).count();
-        drop(inner);
-        
-        if active_count - 1 < self.min_active_target {
-            self.evict_worst_and_refill();
-        }
-        
-        backend.mark_isolated();
-    }
+    /// 单一收口：检查是否允许减少一个可选后端。
+    /// 达到下限时尝试从备池补位。返回 true 表示允许操作。
+    pub(crate) fn try_deactivate(&self) -> bool {
+        let selectable = self.inner.read().primary.iter()
+            .filter(|b| b.is_selectable()).count();
 
-    fn evict_worst_and_refill(&self) {
-        let mut inner = self.inner.write();
-        
-        let worst = inner.primary.iter()
-            .filter(|b| !b.is_removed())
-            .min_by(|a, b| Backend::cmp_eviction(a, b));
-        
-        if let Some(worst_backend) = worst {
-            let addr = worst_backend.addr;
-            worst_backend.mark_removed();
-            inner.primary.retain(|b| !b.is_removed());
-            push_log("WARN", &format!("[×] {} 被淘汰 (评分最差)", addr));
-            
-            if !inner.backup.is_empty() {
-                let promoted = inner.backup.remove(0);
-                let promoted_addr = promoted.addr;
-                promoted.mark_active();
-                inner.primary.push(promoted);
-                push_log("INFO", &format!("[↑] {} 从备选补充到负载均衡队列", promoted_addr));
-            }
+        if selectable > self.min_active_target {
+            return true;
         }
-        
-        drop(inner);
-        self.notify_resume();
+
+        // 达到下限，尝试用备池补一个
+        let mut inner = self.inner.write();
+        if let Some(pos) = inner.backup.iter().position(|b| b.is_selectable()) {
+            let replacement = inner.backup.remove(pos);
+            let promoted_addr = replacement.addr;
+            replacement.mark_active();
+            inner.primary.push(replacement);
+            drop(inner);
+            self.notify_resume();
+            push_log("INFO", &format!("[↑] {} 从备选补充到负载均衡队列", promoted_addr));
+            true
+        } else {
+            false
+        }
     }
 
     pub fn refill_from_backup(&self) {
@@ -838,18 +830,25 @@ impl LoadBalancer {
 
         match action {
             Action::Isolate => {
-                lb.isolate_backend(&backend);
-                push_log("WARN", &format!("[→] {} 隔离 (延迟{:.0}ms 丢包{:.0}%)",
-                    backend.addr, backend.get_avg_delay(), backend.get_loss_rate() * 100.0));
-                true
+                let isolated = lb.try_deactivate();
+                if isolated {
+                    backend.mark_isolated();
+                    push_log("WARN", &format!("[→] {} 隔离 (延迟{:.0}ms 丢包{:.0}%)",
+                        backend.addr, backend.get_avg_delay(), backend.get_loss_rate() * 100.0));
+                }
+                isolated
             }
             Action::Remove(reason) => {
-                backend.mark_removed();
-                push_log("WARN", &format!("[-] {} 移除 ({})", backend.addr, reason));
-                if is_primary {
-                    lb.refill_from_backup();
+                if lb.try_deactivate() {
+                    backend.mark_removed();
+                    push_log("WARN", &format!("[-] {} 移除 ({})", backend.addr, reason));
+                    if is_primary {
+                        lb.refill_from_backup();
+                    }
+                    true
+                } else {
+                    false
                 }
-                true
             }
             Action::Recover => {
                 backend.record_success();
