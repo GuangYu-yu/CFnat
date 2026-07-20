@@ -85,43 +85,28 @@ pub fn get_log_buffer() -> Arc<LogBuffer> {
 #[macro_export]
 macro_rules! log_info {
     ($($arg:tt)*) => {
-        {
-            let msg = format!($($arg)*);
-            println!("{}", msg);
-            $crate::log::get_log_buffer().push("INFO", &msg);
-        }
+        $crate::log::push_log("INFO", &format!($($arg)*));
     };
 }
 
 #[macro_export]
 macro_rules! log_warn {
     ($($arg:tt)*) => {
-        {
-            let msg = format!($($arg)*);
-            println!("[警告] {}", msg);
-            $crate::log::get_log_buffer().push("WARN", &msg);
-        }
+        $crate::log::push_log("WARN", &format!($($arg)*));
     };
 }
 
 #[macro_export]
 macro_rules! log_error {
     ($($arg:tt)*) => {
-        {
-            let msg = format!($($arg)*);
-            eprintln!("[错误] {}", msg);
-            $crate::log::get_log_buffer().push("ERROR", &msg);
-        }
+        $crate::log::push_log("ERROR", &format!($($arg)*));
     };
 }
 
 #[macro_export]
 macro_rules! log_debug {
     ($($arg:tt)*) => {
-        {
-            let msg = format!($($arg)*);
-            $crate::log::get_log_buffer().push("DEBUG", &msg);
-        }
+        $crate::log::push_log("DEBUG", &format!($($arg)*));
     };
 }
 

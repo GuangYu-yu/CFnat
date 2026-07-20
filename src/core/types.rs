@@ -44,6 +44,25 @@ pub fn increment_status_version() -> u64 {
     STATUS_VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
 }
 
+impl Default for StatusInfo {
+    fn default() -> Self {
+        Self {
+            version: 0,
+            running: false,
+            uptime_secs: 0,
+            health_check_interval: crate::core::config::get_global_config().health_check_interval.as_secs(),
+            next_health_check: 0,
+            primary_count: 0,
+            primary_target: 0,
+            backup_count: 0,
+            backup_target: 0,
+            primary_ips: vec![],
+            backup_ips: vec![],
+            sticky_ips: vec![],
+        }
+    }
+}
+
 impl StatusInfo {
     pub fn from_loadbalancer(lb: &crate::core::loadbalancer::LoadBalancer) -> Self {
         let primary_backends = lb.get_primary_backends();
@@ -86,14 +105,7 @@ impl StatusInfo {
             running: false,
             uptime_secs: 0,
             health_check_interval: crate::core::config::get_global_config().health_check_interval.as_secs(),
-            next_health_check: 0,
-            primary_count: 0,
-            primary_target: 0,
-            backup_count: 0,
-            backup_target: 0,
-            primary_ips: vec![],
-            backup_ips: vec![],
-            sticky_ips: vec![],
+            ..Default::default()
         }
     }
 }

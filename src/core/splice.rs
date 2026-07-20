@@ -12,11 +12,15 @@ struct Pipe {
 impl Pipe {
     fn new() -> io::Result<Self> {
         let mut fds = [-1i32; 2];
+        // SAFETY: pipe2 调用使用正确大小的缓冲区(fds)和标准标志位。
+        // O_CLOEXEC 和 O_NONBLOCK 是标准标志，返回值已检查错误。
         let ret = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) };
         if ret != 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(Self {
+            // SAFETY: fds[0] 和 fds[1] 是 pipe2 刚返回的有效文件描述符。
+            // OwnedFd::from_raw_fd 接管所有权，防止重复关闭。
             reader: unsafe { OwnedFd::from_raw_fd(fds[0]) },
             writer: unsafe { OwnedFd::from_raw_fd(fds[1]) },
         })
@@ -39,6 +43,9 @@ fn wait_for_event(fd: RawFd, events: i16) -> io::Result<()> {
         events,
         revents: 0,
     };
+    // SAFETY: poll_fd 是正确初始化的 pollfd 结构体，包含有效的 fd 和
+    // 请求的事件。超时时间为正数。即使 fd 无效，poll 也是安全的
+    //（错误通过 revents 返回）。
     let ret = unsafe { libc::poll(&mut poll_fd, 1, IDLE_TIMEOUT_MS) };
     match ret {
         n if n < 0 => {
@@ -67,6 +74,9 @@ fn wait_for_event(fd: RawFd, events: i16) -> io::Result<()> {
 
 fn splice_once(src: RawFd, dst: RawFd, len: usize) -> io::Result<usize> {
     loop {
+        // SAFETY: src 和 dst 是本进程拥有的有效文件描述符。
+        // 偏移量传空指针适用于管道/套接字（没有文件偏移概念）。
+        // SPLICE_F_MOVE 和 SPLICE_F_NONBLOCK 是安全的标志组合。
         let n = unsafe {
             libc::splice(
                 src,

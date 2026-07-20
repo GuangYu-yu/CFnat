@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use tokio::task::JoinHandle;
 
-use crate::core::{IpPool, LoadBalancer, HttpingConfig, build_hyper_client, parse_url, run_continuous_httping, run_forward, CancellationToken};
+use crate::core::{IpPool, LoadBalancer, HttpingConfig, build_hyper_client, run_continuous_httping, run_forward, CancellationToken};
 use crate::core::types::{StatusInfo, ConfigOverrides};
 use crate::log::{push_log, reset_start_time, get_log_buffer};
 
@@ -189,10 +189,7 @@ impl ServiceState {
 
         let config = self.get_config();
 
-        let (_, host, _, _) = parse_url(&config.http)
-            .ok_or("URL 解析失败")?;
-
-        let client = build_hyper_client(config.delay_limit, host.clone())
+        let client = build_hyper_client(config.delay_limit)
             .ok_or("创建 HTTP 客户端失败")?;
 
         let client = Arc::new(client);
@@ -210,7 +207,6 @@ impl ServiceState {
                 .with_timeout(1800)
                 .with_notify(notify_tx)
                 .with_client(client.clone())
-                .with_server_name(host.clone())
                 .with_colo_filter(colo_filter.clone())
                 .with_max_sticky_slots(config.max_sticky_slots),
         );
@@ -278,13 +274,15 @@ impl ServiceState {
         if let Some(lb) = self.loadbalancer.read().as_ref() {
             lb.stop();
         }
-        
-        self.running.store(false, Ordering::Relaxed);
 
+        // 先等任务确实停止
         let handles: Vec<JoinHandle<()>> = self.task_handles.write().drain(..).collect();
         for handle in handles {
             let _ = tokio::time::timeout(Duration::from_secs(3), handle).await;
         }
+
+        // 再标记停止，避免 start() 在旧任务未停时误入
+        self.running.store(false, Ordering::Relaxed);
 
         *self.ip_pool.write() = None;
         *self.loadbalancer.write() = None;
@@ -292,7 +290,7 @@ impl ServiceState {
         *self.start_time.write() = None;
 
         push_log("INFO", "服务已停止");
-        
+
         Ok(())
     }
 

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{self};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -14,31 +14,11 @@ use crate::log::push_log;
 
 const READABLE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
-const TLS_HELLO_TIMEOUT: Duration = Duration::from_secs(5);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[inline]
 fn is_tls(first_byte: u8) -> bool {
     first_byte == 0x16
-}
-
-async fn read_tls_client_hello(client: &mut TcpStream, first_byte: u8) -> io::Result<Vec<u8>> {
-    let mut header = [0u8; 4];
-    tokio::time::timeout(TLS_HELLO_TIMEOUT, client.read_exact(&mut header))
-        .await
-        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
-
-    let record_len = u16::from_be_bytes([header[2], header[3]]) as usize;
-
-    let mut body = vec![0u8; record_len];
-    tokio::time::timeout(TLS_HELLO_TIMEOUT, client.read_exact(&mut body))
-        .await
-        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
-
-    let mut full = Vec::with_capacity(1 + 4 + body.len());
-    full.push(first_byte);
-    full.extend_from_slice(&header);
-    full.extend_from_slice(&body);
-    Ok(full)
 }
 
 async fn transfer_direction(
@@ -50,7 +30,7 @@ async fn transfer_direction(
         tokio::time::timeout(READABLE_TIMEOUT, reader.readable())
             .await
             .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
-        lb.record_delay(&backend, start.elapsed().as_secs_f32() * 1000.0);
+        lb.record(&backend, Some(start.elapsed().as_secs_f32() * 1000.0), false);
     }
 
     #[cfg(target_os = "linux")]
@@ -68,7 +48,9 @@ async fn transfer_direction(
     }
 
     #[cfg(not(target_os = "linux"))]
-    io::copy(&mut reader, &mut writer).await?;
+    tokio::time::timeout(IDLE_TIMEOUT, io::copy(&mut reader, &mut writer))
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
 
     Ok(())
 }
@@ -88,7 +70,7 @@ async fn race_connect(
             match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr)).await {
                 Ok(Ok(stream)) => Ok((b, Some(stream))),
                 _ => {
-                    lb.record_loss(&b, true);
+                    lb.record(&b, None, true);
                     Ok((b, None))
                 }
             }
@@ -107,7 +89,7 @@ async fn race_connect(
 }
 
 async fn handle_client(
-    mut client: TcpStream,
+    client: TcpStream,
     lb: Arc<LoadBalancer>,
     tls_port: u16,
     http_port: u16,
@@ -115,17 +97,20 @@ async fn handle_client(
 ) -> io::Result<()> {
     let connect_start = Instant::now();
 
-    let mut first = [0u8; 1];
-    let _ = tokio::time::timeout(TLS_HELLO_TIMEOUT, client.read(&mut first)).await;
-
-    let tls = is_tls(first[0]);
-    let pending = if tls {
-        read_tls_client_hello(&mut client, first[0]).await?
+    // 确定目标端口
+    let target_port = if tls_port == http_port {
+        tls_port
     } else {
-        first.to_vec()
+        let mut buf = [0u8; 1];
+        let tls = match tokio::time::timeout(Duration::from_secs(5), client.peek(&mut buf)).await {
+            Ok(Ok(_)) => is_tls(buf[0]),
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err(io::Error::from(io::ErrorKind::TimedOut)),
+        };
+        if tls { tls_port } else { http_port }
     };
-    let target_port = if tls { tls_port } else { http_port };
 
+    // 选后端
     let backends: Vec<Arc<Backend>> = (0..2).filter_map(|_| lb.select()).collect();
     if backends.is_empty() {
         if !warned.swap(true, Ordering::Relaxed) {
@@ -135,9 +120,10 @@ async fn handle_client(
     }
     warned.store(false, Ordering::Relaxed);
 
+    // 并发竞速连接
     let winner = race_connect(&backends, target_port, &lb).await;
 
-    let (backend, mut server) = match winner {
+    let (backend, server) = match winner {
         Some(w) => w,
         None => {
             for b in &backends {
@@ -148,15 +134,16 @@ async fn handle_client(
         }
     };
 
+    // 释放未选中的后端
     for b in &backends {
         if !Arc::ptr_eq(b, &backend) {
             lb.release(b);
         }
     }
 
+    // 配置连接并转发
     server.set_nodelay(true)?;
     client.set_nodelay(true)?;
-    server.write_all(&pending).await?;
 
     let start = Instant::now();
     let (cr, cw) = client.into_split();

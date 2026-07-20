@@ -11,7 +11,7 @@ use crate::core::config::get_global_config;
 use crate::core::hyper::{parse_url, send_request};
 use crate::core::ip::IpPool;
 use crate::core::loadbalancer::{AddResult, LoadBalancer};
-use crate::core::pool::GLOBAL_LIMITER;
+use crate::core::pool::get_global_limiter;
 use crate::log::push_log;
 
 type PingResult = Option<(SocketAddr, f32, Option<String>, u8, bool)>;
@@ -67,7 +67,8 @@ pub async fn http_ping_multi(
     ip: std::net::IpAddr,
     config: &PingConfig,
 ) -> Option<PingResultDetail> {
-    let _permit = GLOBAL_LIMITER.get()?.acquire().await;
+    let limiter = get_global_limiter()?;
+    let _permit = limiter.acquire().await;
 
     let port = if &*config.scheme == "https" { config.tls_port } else { config.http_port };
     let addr = SocketAddr::new(ip, port);
@@ -78,7 +79,8 @@ pub async fn http_ping_multi(
     let mut colo: Option<String> = None;
     let mut colo_mismatch = false;
 
-    for _ in 0..get_global_config().ping_times {
+    let ping_times = get_global_config().ping_times;
+    for i in 0..ping_times {
         if colo_mismatch {
             break;
         }
@@ -100,7 +102,7 @@ pub async fn http_ping_multi(
                 colo = c;
             }
 
-            if !colo_mismatch {
+            if !colo_mismatch && i + 1 < ping_times {
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
         }
@@ -156,7 +158,7 @@ pub async fn run_continuous_httping(
 
     push_log("INFO", "测速启动...");
 
-    let concurrency = GLOBAL_LIMITER.get().unwrap().max_concurrent();
+    let concurrency = get_global_limiter().unwrap().max_concurrent();
     let mut tasks: JoinSet<PingResult> = JoinSet::new();
 
     let spawn_task = |ip: std::net::IpAddr, cfg: PingConfig| {

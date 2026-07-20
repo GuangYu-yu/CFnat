@@ -71,7 +71,6 @@ pub struct LoadBalancer {
     delay_threshold: AtomicU32,
     loss_threshold: AtomicU32,
     client: RwLock<Option<Arc<crate::core::hyper::MyHyperClient>>>,
-    server_name: RwLock<String>,
     colo_filter: Option<Arc<Vec<String>>>,
     sticky_slots: RwLock<Vec<StickySlot>>,
     last_expand_ms: AtomicU64,
@@ -110,7 +109,6 @@ impl LoadBalancer {
             delay_threshold: AtomicU32::new(0.0f32.to_bits()),
             loss_threshold: AtomicU32::new(0.0f32.to_bits()),
             client: RwLock::new(None),
-            server_name: RwLock::new(String::new()),
             colo_filter: None,
             sticky_slots: RwLock::new(Vec::new()),
             last_expand_ms: AtomicU64::new(now_ms()),
@@ -197,14 +195,8 @@ impl LoadBalancer {
         self
     }
 
-    pub fn with_server_name(self, server_name: String) -> Self {
-        *self.server_name.write() = server_name;
-        self
-    }
-
     pub fn rebuild_client(&self) {
-        let server_name = self.server_name.read().clone();
-        if let Some(new_client) = crate::core::hyper::build_hyper_client(self.timeout_ms, server_name) {
+        if let Some(new_client) = crate::core::hyper::build_hyper_client(self.timeout_ms) {
             *self.client.write() = Some(Arc::new(new_client));
             push_log("INFO", "[重建] HTTP 客户端已重建");
         }
@@ -250,12 +242,12 @@ impl LoadBalancer {
     pub fn select(&self) -> Option<Arc<Backend>> {
         let slots = self.sticky_slots.read();
         let len = slots.len();
-        
+
         if len > 0 {
             return self.select_from_slots(&slots, len);
         }
         drop(slots);
-        
+
         let inner = self.inner.read();
         if !inner.primary.is_empty() {
             return self.select_from_pool(&inner.primary, &self.primary_index);
@@ -271,13 +263,13 @@ impl LoadBalancer {
         let on_select = |slot: &StickySlot| {
             slot.last_access_ms.store(current_ms, Ordering::Release);
         };
-        
+
         if len == 1 {
             on_select(&slots[0]);
             slots[0].backend.fetch_add_connection(1);
             return Some(slots[0].backend.clone());
         }
-        
+
         Self::select_by_connection(slots, &self.primary_index, |s| &s.backend, |s| s.backend.clone(), on_select)
     }
 
@@ -460,12 +452,8 @@ impl LoadBalancer {
         backend.fetch_sub_connection(1);
     }
 
-    pub fn record_delay(&self, backend: &Backend, delay_ms: f32) {
-        backend.record_delay(delay_ms);
-    }
-
-    pub fn record_loss(&self, backend: &Backend, is_loss: bool) {
-        backend.record_loss(is_loss);
+    pub fn record(&self, backend: &Backend, delay_ms: Option<f32>, is_loss: bool) {
+        backend.record(delay_ms, is_loss);
     }
 
     pub fn check_and_evict(&self, backend: &Backend) -> bool {
@@ -591,13 +579,9 @@ impl LoadBalancer {
     }
 
     fn add_to_list(&self, addr: SocketAddr, initial_delay: f32, initial_loss: f32, colo: Option<String>, target: &mut Vec<Arc<Backend>>) {
-        let ip = addr.ip();
-        if self.contains(ip) {
-            return;
-        }
         let backend = Arc::new(Backend::new_with_initial(addr, initial_delay, initial_loss, colo));
         target.push(backend);
-        self.ip_set.write().insert(ip);
+        self.ip_set.write().insert(addr.ip());
     }
 
     pub fn get_primary_backends(&self) -> Vec<Arc<Backend>> {
@@ -732,20 +716,24 @@ impl LoadBalancer {
             let mut join_set = tokio::task::JoinSet::new();
             let mut removed_count = 0usize;
 
+            let ping_config = config.ping_config;
+            let delay_threshold = config.delay_threshold;
+            let loss_threshold = config.loss_threshold;
+
             for backend in backends {
                 if backend.is_removed() {
                     continue;
                 }
 
-                let config = config.clone();
+                let pc = ping_config.clone();
                 let lb = lb.clone();
 
                 join_set.spawn(async move {
                     let result = crate::core::httping::http_ping_multi(
                         backend.addr.ip(),
-                        &config.ping_config,
+                        &pc,
                     ).await;
-                    (backend, result, config.delay_threshold, config.loss_threshold, lb, pool_type)
+                    (backend, result, delay_threshold, loss_threshold, lb, pool_type)
                 });
 
                 if join_set.len() >= concurrency
@@ -811,11 +799,10 @@ impl LoadBalancer {
                 Action::Remove(format!("数据中心[{}]不匹配", detail.colo.as_deref().unwrap_or("未知")))
             }
             Some(detail) => {
-                backend.record_delay(detail.delay);
+                backend.record(Some(detail.delay), detail.success_count < get_global_config().ping_times);
                 if let Some(c) = detail.colo {
                     backend.set_colo(Some(c));
                 }
-                backend.record_loss(detail.success_count < get_global_config().ping_times);
 
                 if backend.get_sample_count() < get_global_config().sample_window as usize {
                     Action::None
@@ -830,7 +817,7 @@ impl LoadBalancer {
                 }
             }
             None => {
-                backend.record_loss(true);
+                backend.record(None, true);
                 backend.record_failure();
 
                 let loss_rate = backend.get_loss_rate();
