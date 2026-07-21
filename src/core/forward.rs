@@ -14,7 +14,6 @@ use crate::log::push_log;
 
 const READABLE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
-const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[inline]
 fn is_tls(first_byte: u8) -> bool {
@@ -22,8 +21,8 @@ fn is_tls(first_byte: u8) -> bool {
 }
 
 async fn transfer_direction(
-    mut reader: OwnedReadHalf,
-    mut writer: OwnedWriteHalf,
+    reader: OwnedReadHalf,
+    writer: OwnedWriteHalf,
     metrics: Option<(Arc<LoadBalancer>, Arc<Backend>, Instant)>,
 ) -> io::Result<()> {
     tokio::time::timeout(READABLE_TIMEOUT, reader.readable())
@@ -36,22 +35,24 @@ async fn transfer_direction(
 
     #[cfg(target_os = "linux")]
     {
-        use std::os::unix::io::AsRawFd;
-        let rfd = reader.as_raw_fd();
-        let wfd = writer.as_raw_fd();
+        use std::os::fd::AsRawFd;
+        let rfd = reader.as_ref().as_raw_fd();
+        let wfd = writer.as_ref().as_raw_fd();
         tokio::task::spawn_blocking(move || {
             let _reader = reader;
             let _writer = writer;
             crate::core::splice::transfer(rfd, wfd)
         })
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))??
     }
 
     #[cfg(not(target_os = "linux"))]
-    tokio::time::timeout(IDLE_TIMEOUT, io::copy(&mut reader, &mut writer))
-        .await
-        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+    {
+        let mut reader = reader;
+        let mut writer = writer;
+        io::copy(&mut reader, &mut writer).await?;
+    }
 
     Ok(())
 }
