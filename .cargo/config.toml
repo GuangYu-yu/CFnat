@@ -1,6 +1,5 @@
 [build]
 rustflags = [
-    "-C", "link-arg=-s",
     "-C", "overflow-checks=off",
     "-C", "codegen-units=1",
     "--remap-path-prefix=/home/runner/.cargo/registry=registry",
