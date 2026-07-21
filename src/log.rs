@@ -113,11 +113,12 @@ macro_rules! log_debug {
 pub fn push_log(level: &str, message: &str) {
     get_log_buffer().push(level, message);
     
+    let ts = format_time();
     match level {
-        "INFO" => println!("{}", message),
-        "WARN" => println!("[警告] {}", message),
-        "ERROR" => eprintln!("[错误] {}", message),
+        "INFO" => println!("[{}] {}", ts, message),
+        "WARN" => println!("[{}] [警告] {}", ts, message),
+        "ERROR" => eprintln!("[{}] [错误] {}", ts, message),
         "DEBUG" => {}
-        _ => println!("{}", message),
+        _ => println!("[{}] {}", ts, message),
     }
 }
