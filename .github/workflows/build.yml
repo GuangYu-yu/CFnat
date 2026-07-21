@@ -185,7 +185,7 @@ jobs:
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }}_${{ matrix.arch }}
+          name: ${{ inputs.project_name }}-${{ matrix.os }}-${{ matrix.arch }}
           path: binaries/${{ matrix.os }}_${{ matrix.arch }}/
 
   strip_binaries:
@@ -197,6 +197,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: stripped_artifacts/
+          pattern: ${{ inputs.project_name }}-*
       - name: Install llvm-strip
         run: sudo apt-get update && sudo apt-get install -y llvm
       - name: Strip
