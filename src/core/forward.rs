@@ -26,10 +26,11 @@ async fn transfer_direction(
     mut writer: OwnedWriteHalf,
     metrics: Option<(Arc<LoadBalancer>, Arc<Backend>, Instant)>,
 ) -> io::Result<()> {
+    tokio::time::timeout(READABLE_TIMEOUT, reader.readable())
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+
     if let Some((lb, backend, start)) = metrics {
-        tokio::time::timeout(READABLE_TIMEOUT, reader.readable())
-            .await
-            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
         lb.record(&backend, Some(start.elapsed().as_secs_f32() * 1000.0), false);
     }
 
@@ -103,7 +104,12 @@ async fn handle_client(
     } else {
         let mut buf = [0u8; 1];
         let tls = match tokio::time::timeout(Duration::from_secs(5), client.peek(&mut buf)).await {
-            Ok(Ok(_)) => is_tls(buf[0]),
+            Ok(Ok(n)) => {
+                if n == 0 {
+                    return Ok(());
+                }
+                is_tls(buf[0])
+            }
             Ok(Err(e)) => return Err(e),
             Err(_) => return Err(io::Error::from(io::ErrorKind::TimedOut)),
         };
