@@ -42,23 +42,40 @@ fn splice_once(src: RawFd, dst: RawFd, len: usize) -> io::Result<usize> {
         // SAFETY: src 和 dst 是本进程拥有的有效文件描述符。
         // 偏移量传空指针适用于管道/套接字（没有文件偏移概念）。
         let n = unsafe {
-            libc::splice(
-                src,
-                std::ptr::null_mut(),
-                dst,
-                std::ptr::null_mut(),
-                len,
-                libc::SPLICE_F_MOVE,
-            )
+            libc::splice(src, std::ptr::null_mut(), dst, std::ptr::null_mut(), len, 0)
         };
         if n >= 0 {
             return Ok(n as usize);
         }
         let err = io::Error::last_os_error();
-        if err.kind() != io::ErrorKind::Interrupted {
+        if err.kind() == io::ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(err);
+    }
+}
+
+fn poll_wait(fd: RawFd, events: i16) -> io::Result<()> {
+    let mut pfd = libc::pollfd {
+        fd,
+        events,
+        revents: 0,
+    };
+    loop {
+        let ret = unsafe { libc::poll(&mut pfd, 1, -1) };
+        if ret < 0 {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
             return Err(err);
         }
+        break;
     }
+    if pfd.revents & events != 0 {
+        return Ok(());
+    }
+    Err(io::Error::from(io::ErrorKind::ConnectionReset))
 }
 
 fn splice_loop(
@@ -68,17 +85,34 @@ fn splice_loop(
     pipe_writer: RawFd,
 ) -> io::Result<()> {
     loop {
-        let n = match splice_once(input_fd, pipe_writer, BUF_SIZE) {
-            Ok(0) => return Ok(()),
-            Ok(n) => n,
-            Err(e) => return Err(e),
+        let n = loop {
+            match splice_once(input_fd, pipe_writer, BUF_SIZE) {
+                Ok(0) => {
+                    let _ = unsafe { libc::shutdown(output_fd, libc::SHUT_WR) };
+                    return Ok(());
+                }
+                Ok(n) => break n,
+                Err(e) => {
+                    if e.kind() == io::ErrorKind::WouldBlock {
+                        poll_wait(input_fd, libc::POLLIN)?;
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
         };
 
         let mut remaining = n;
         while remaining > 0 {
             match splice_once(pipe_reader, output_fd, remaining) {
                 Ok(w) => remaining -= w,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    if e.kind() == io::ErrorKind::WouldBlock {
+                        poll_wait(output_fd, libc::POLLOUT)?;
+                        continue;
+                    }
+                    return Err(e);
+                }
             }
         }
     }
