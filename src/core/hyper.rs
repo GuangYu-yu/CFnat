@@ -122,6 +122,8 @@ impl Service<Uri> for ConnectorService {
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
             stream.set_nodelay(true).ok();
+            #[allow(deprecated)]
+            let _ = stream.set_linger(Some(std::time::Duration::ZERO));
             Ok(TokioIo::new(stream))
         })
     }

@@ -70,7 +70,11 @@ async fn race_connect(
         let lb = lb.clone();
         set.spawn(async move {
             match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr)).await {
-                Ok(Ok(stream)) => Ok((b, Some(stream))),
+                Ok(Ok(stream)) => {
+                    #[allow(deprecated)]
+                    let _ = stream.set_linger(Some(std::time::Duration::ZERO));
+                    Ok((b, Some(stream)))
+                },
                 _ => {
                     lb.record(&b, None, true);
                     Ok((b, None))
@@ -151,6 +155,10 @@ async fn handle_client(
     // 配置连接并转发
     server.set_nodelay(true)?;
     client.set_nodelay(true)?;
+    #[allow(deprecated)]
+    let _ = server.set_linger(Some(std::time::Duration::ZERO));
+    #[allow(deprecated)]
+    let _ = client.set_linger(Some(std::time::Duration::ZERO));
 
     let start = Instant::now();
     let (cr, cw) = client.into_split();

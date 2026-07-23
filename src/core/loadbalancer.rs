@@ -341,6 +341,7 @@ impl LoadBalancer {
             let last_access = s.last_access_ms.load(Ordering::Acquire);
             current_ms.saturating_sub(last_access) < ttl_ms
         });
+        slots.shrink_to_fit();
         
         let get_active_unused = |used_addrs: &HashSet<SocketAddr>| {
             pool.iter()
@@ -429,10 +430,12 @@ impl LoadBalancer {
         
         let before = inner.primary.len();
         inner.primary.retain(|b| !b.is_removed());
+        inner.primary.shrink_to_fit();
         let primary_removed = before - inner.primary.len();
         
         let backup_before = inner.backup.len();
         inner.backup.retain(|b| !b.is_removed());
+        inner.backup.shrink_to_fit();
         let backup_removed = backup_before - inner.backup.len();
 
         drop(inner);
