@@ -1,6 +1,9 @@
 pub mod args;
 pub mod log;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[cfg(feature = "web")]
 pub mod api;
 pub mod core;
