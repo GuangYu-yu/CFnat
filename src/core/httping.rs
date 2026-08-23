@@ -14,6 +14,9 @@ use crate::core::loadbalancer::{AddResult, LoadBalancer};
 use crate::core::pool::get_global_limiter;
 use crate::log::push_log;
 
+/// 同一 IP 相邻两次探测之间的间隔
+const PING_GAP: Duration = Duration::from_millis(200);
+
 type PingResult = Option<(SocketAddr, f32, Option<String>, u8, bool)>;
 
 fn extract_colo(resp: &hyper::Response<hyper::body::Incoming>) -> Option<String> {
@@ -103,7 +106,7 @@ pub(crate) async fn http_ping_multi(
             }
 
             if !colo_mismatch && i + 1 < ping_times {
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                tokio::time::sleep(PING_GAP).await;
             }
         }
     }

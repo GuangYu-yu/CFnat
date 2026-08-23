@@ -14,6 +14,9 @@ use crate::log::push_log;
 
 const READABLE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+const PEEK_TIMEOUT: Duration = Duration::from_secs(5);
+const FAST_FAIL_THRESHOLD: Duration = Duration::from_millis(3000);
+const FAST_FAIL_LIMIT: u32 = 2;
 
 #[inline]
 fn is_tls(first_byte: u8) -> bool {
@@ -103,12 +106,11 @@ async fn handle_client(
 ) -> io::Result<()> {
     let connect_start = Instant::now();
 
-    // 确定目标端口
     let target_port = if tls_port == http_port {
         tls_port
     } else {
         let mut buf = [0u8; 1];
-        let tls = match tokio::time::timeout(Duration::from_secs(5), client.peek(&mut buf)).await {
+        let tls = match tokio::time::timeout(PEEK_TIMEOUT, client.peek(&mut buf)).await {
             Ok(Ok(n)) => {
                 if n == 0 {
                     return Ok(());
@@ -121,8 +123,16 @@ async fn handle_client(
         if tls { tls_port } else { http_port }
     };
 
-    // 选后端
-    let backends: Vec<Arc<Backend>> = (0..2).filter_map(|_| lb.select()).collect();
+    let mut backends: Vec<Arc<Backend>> = Vec::with_capacity(2);
+    while backends.len() < 2 {
+        let Some(b) = lb.select() else { break };
+        if backends.iter().any(|x| Arc::ptr_eq(x, &b)) {
+            lb.release(&b);
+            break;
+        }
+        backends.push(b);
+    }
+
     if backends.is_empty() {
         if !warned.swap(true, Ordering::Relaxed) {
             push_log("WARN", "有客户端连接但无可用后端");
@@ -131,7 +141,6 @@ async fn handle_client(
     }
     warned.store(false, Ordering::Relaxed);
 
-    // 并发竞速连接
     let winner = race_connect(&backends, target_port, &lb).await;
 
     let (backend, server) = match winner {
@@ -145,14 +154,12 @@ async fn handle_client(
         }
     };
 
-    // 释放未选中的后端
     for b in &backends {
         if !Arc::ptr_eq(b, &backend) {
             lb.release(b);
         }
     }
 
-    // 配置连接并转发
     server.set_nodelay(true)?;
     client.set_nodelay(true)?;
     #[allow(deprecated)]
@@ -178,9 +185,9 @@ async fn handle_client(
     lb.release(&backend);
 
     let lifetime = connect_start.elapsed();
-    if result.is_err() && lifetime.as_millis() < 3000 {
+    if result.is_err() && lifetime < FAST_FAIL_THRESHOLD {
         backend.record_fast_fail();
-        if backend.get_fast_fail_count() >= 2
+        if backend.get_fast_fail_count() >= FAST_FAIL_LIMIT
             && lb.try_deactivate()
         {
             push_log("WARN", &format!("[-] {} 连续快速断开，移除", backend.addr));

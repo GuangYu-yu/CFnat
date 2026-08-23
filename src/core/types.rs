@@ -90,10 +90,7 @@ impl StatusInfo {
     }
 
     pub fn empty() -> Self {
-        Self {
-            health_check_interval: crate::core::config::get_global_config().health_check_interval.as_secs(),
-            ..Default::default()
-        }
+        Self::default()
     }
 }
 

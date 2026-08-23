@@ -12,6 +12,9 @@ use crate::core::config::get_global_config;
 use crate::core::httping::{PingConfig, PingResultDetail};
 use crate::log::push_log;
 
+/// 连续失败次数达到该值时判定为超限
+const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -76,7 +79,6 @@ pub struct LoadBalancer {
     last_expand_ms: AtomicU64,
     cancel_token: CancellationToken,
     next_health_check_ms: AtomicU64,
-    next_primary_health_check_ms: AtomicU64,
     max_sticky_slots: usize,
 }
 
@@ -114,7 +116,6 @@ impl LoadBalancer {
             last_expand_ms: AtomicU64::new(now_ms()),
             cancel_token: CancellationToken::new(),
             next_health_check_ms: AtomicU64::new(now_ms()),
-            next_primary_health_check_ms: AtomicU64::new(now_ms()),
             max_sticky_slots: get_global_config().max_sticky_slots,
         }
     }
@@ -163,10 +164,6 @@ impl LoadBalancer {
     pub fn with_colo_filter(mut self, colo_filter: Option<Vec<String>>) -> Self {
         self.colo_filter = colo_filter.map(Arc::new);
         self
-    }
-
-    pub fn get_delay_threshold(&self) -> f32 {
-        f32::from_bits(self.delay_threshold.load(Ordering::Relaxed))
     }
 
     pub fn with_health_check_url(mut self, url: String) -> Self {
@@ -628,7 +625,6 @@ impl LoadBalancer {
         let current_ms = now_ms();
         let hc = get_global_config().health_check_interval;
         self.next_health_check_ms.store(current_ms + hc.as_millis() as u64, Ordering::Relaxed);
-        self.next_primary_health_check_ms.store(current_ms + hc.as_millis() as u64 * 4, Ordering::Relaxed);
 
         let lb = self.clone();
         tokio::spawn(async move {
@@ -672,7 +668,6 @@ impl LoadBalancer {
         self: &Arc<Self>,
         config: HealthCheckConfig,
         pool_type: PoolType,
-        interval: Duration,
     ) {
         let is_primary = pool_type == PoolType::Primary;
         
@@ -684,9 +679,10 @@ impl LoadBalancer {
         };
         
         if backends.is_empty() {
-            let next_ms = now_ms() + interval.as_millis() as u64;
-            let target = if is_primary { &self.next_primary_health_check_ms } else { &self.next_health_check_ms };
-            target.store(next_ms, Ordering::Relaxed);
+            if !is_primary {
+                let next_ms = now_ms() + get_global_config().health_check_interval.as_millis() as u64;
+                self.next_health_check_ms.store(next_ms, Ordering::Relaxed);
+            }
             return;
         }
 
@@ -740,23 +736,22 @@ impl LoadBalancer {
                 push_log("INFO", &format!("[{}] 检查完成，移除 {} 个", pool_type_str, removed_count));
             }
             
-            let current_ms = now_ms();
             if is_primary {
                 lb.refill_from_backup();
-                lb.next_primary_health_check_ms.store(current_ms + interval.as_millis() as u64, Ordering::Relaxed);
             } else {
                 lb.sort_backup();
-                lb.next_health_check_ms.store(current_ms + interval.as_millis() as u64, Ordering::Relaxed);
+                let current_ms = now_ms();
+                lb.next_health_check_ms.store(current_ms + get_global_config().health_check_interval.as_millis() as u64, Ordering::Relaxed);
             }
         });
     }
 
     fn run_backup_health_check(self: &Arc<Self>, config: HealthCheckConfig) {
-        self.run_health_check_for_pool(config, PoolType::Backup, get_global_config().health_check_interval);
+        self.run_health_check_for_pool(config, PoolType::Backup);
     }
 
     fn run_primary_health_check(self: &Arc<Self>, config: HealthCheckConfig) {
-        self.run_health_check_for_pool(config, PoolType::Primary, Duration::from_secs(120));
+        self.run_health_check_for_pool(config, PoolType::Primary);
     }
 
     fn handle_health_check_result(
@@ -804,7 +799,7 @@ impl LoadBalancer {
 
                 let loss_rate = backend.get_loss_rate();
                 let failures = backend.consecutive_failures();
-                let over_limit = loss_rate > loss_threshold || failures >= 3;
+                let over_limit = loss_rate > loss_threshold || failures >= MAX_CONSECUTIVE_FAILURES;
 
                 if backend.get_sample_count() >= get_global_config().sample_window as usize && over_limit {
                     if backend.is_isolated() || !is_primary {

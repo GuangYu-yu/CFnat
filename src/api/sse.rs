@@ -22,15 +22,13 @@ pub async fn stream_updates(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let stream = tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(1)))
         .filter_map(move |_| {
-            let info = state.service.build_full_status();
-            let config = state.service.get_config();
-
             let update = StreamUpdate {
-                status: info,
-                config,
+                status: state.service.build_full_status(),
+                config: state.service.get_config(),
             };
 
-            Some(Ok(Event::default().json_data(update).unwrap()))
+            // 序列化失败时跳过本次推送，避免 panic 中断 SSE 流
+            Event::default().json_data(update).ok().map(Ok)
         });
 
     Sse::new(stream).keep_alive(
