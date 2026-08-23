@@ -4,7 +4,6 @@ abstract class AppService extends ChangeNotifier {
   StatusData? get status;
   ConfigData? get config;
   bool get connected;
-  bool get isLoading;
   bool get isRunning;
 
   Future<void> fetchStatus();
@@ -31,8 +30,6 @@ abstract class AppService extends ChangeNotifier {
 class StatusData {
   final bool running;
   final int uptimeSecs;
-  final int nextHealthCheck;
-  final int healthCheckInterval;
   final int primaryCount;
   final int primaryTarget;
   final int backupCount;
@@ -44,8 +41,6 @@ class StatusData {
   StatusData({
     required this.running,
     required this.uptimeSecs,
-    required this.nextHealthCheck,
-    required this.healthCheckInterval,
     required this.primaryCount,
     required this.primaryTarget,
     required this.backupCount,
@@ -59,8 +54,6 @@ class StatusData {
     return StatusData(
       running: false,
       uptimeSecs: 0,
-      nextHealthCheck: 0,
-      healthCheckInterval: 0,
       primaryCount: 0,
       primaryTarget: 0,
       backupCount: 0,
@@ -75,8 +68,6 @@ class StatusData {
     return StatusData(
       running: json['running'] as bool,
       uptimeSecs: json['uptime_secs'] as int,
-      nextHealthCheck: json['next_health_check'] as int,
-      healthCheckInterval: json['health_check_interval'] as int,
       primaryCount: json['primary_count'] as int,
       primaryTarget: json['primary_target'] as int,
       backupCount: json['backup_count'] as int,

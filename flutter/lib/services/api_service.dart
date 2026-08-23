@@ -8,7 +8,6 @@ class ApiService extends AppService {
   StatusData? _status;
   ConfigData? _config;
   bool _connected = false;
-  bool _isLoading = false;
   StreamSubscription<String>? _streamSubscription;
   Client? _streamClient;
   int _streamGeneration = 0;
@@ -20,8 +19,6 @@ class ApiService extends AppService {
   ConfigData? get config => _config;
   @override
   bool get connected => _connected;
-  @override
-  bool get isLoading => _isLoading;
   @override
   bool get isRunning => _status?.running ?? false;
 
@@ -123,9 +120,6 @@ class ApiService extends AppService {
 
   @override
   Future<void> fetchStatus() async {
-    _isLoading = true;
-    notifyListeners();
-
     try {
       final response = await get(Uri.parse('/api/status'));
       if (response.statusCode == 200) {
@@ -136,8 +130,6 @@ class ApiService extends AppService {
       debugPrint('获取状态失败: $e');
       _handleDisconnect();
     }
-
-    _isLoading = false;
     notifyListeners();
   }
 

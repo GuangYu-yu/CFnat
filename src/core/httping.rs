@@ -44,7 +44,7 @@ async fn single_ping(
 }
 
 #[derive(Clone, Debug)]
-pub struct PingConfig {
+pub(crate) struct PingConfig {
     pub tls_port: u16,
     pub http_port: u16,
     pub client: Arc<crate::core::hyper::MyHyperClient>,
@@ -55,7 +55,7 @@ pub struct PingConfig {
     pub colo_filter: Option<Arc<Vec<String>>>,
 }
 
-pub struct PingResultDetail {
+pub(crate) struct PingResultDetail {
     pub addr: SocketAddr,
     pub delay: f32,
     pub colo: Option<String>,
@@ -63,7 +63,7 @@ pub struct PingResultDetail {
     pub colo_mismatch: bool,
 }
 
-pub async fn http_ping_multi(
+pub(crate) async fn http_ping_multi(
     ip: std::net::IpAddr,
     config: &PingConfig,
 ) -> Option<PingResultDetail> {
@@ -123,7 +123,7 @@ pub async fn http_ping_multi(
     })
 }
 
-pub struct HttpingConfig {
+pub(crate) struct HttpingConfig {
     pub tls_port: u16,
     pub http_port: u16,
     pub timeout_ms: u64,
@@ -132,7 +132,7 @@ pub struct HttpingConfig {
     pub client: Arc<crate::core::hyper::MyHyperClient>,
 }
 
-pub async fn run_continuous_httping(
+pub(crate) async fn run_continuous_httping(
     ip_pool: Arc<IpPool>,
     lb: Arc<LoadBalancer>,
     url: &str,

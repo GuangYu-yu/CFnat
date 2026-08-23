@@ -55,7 +55,10 @@ async fn run(service: Arc<ServiceState>) {
         let actual_addr = listener.local_addr().unwrap();
 
         tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            if let Err(e) = axum::serve(listener, app).await {
+                eprintln!("API 服务异常退出: {}", e);
+                std::process::exit(1);
+            }
         });
 
         println!("通过 Web 界面控制: http://{} ", actual_addr);

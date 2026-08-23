@@ -94,7 +94,7 @@ jobs:
         run: |
           cd flutter
           flutter pub get
-          flutter build web --release
+          flutter build web --release --no-web-resources-cdn
 
       - name: 替换标题
         run: |

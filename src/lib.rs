@@ -12,8 +12,8 @@ pub mod core;
 pub use api::{create_router, AppState};
 pub use args::Args;
 pub use core::{
-    Backend, Config, HttpingConfig, IpPool, LoadBalancer,
+    Backend, Config, IpPool, LoadBalancer,
     ServiceConfig, ServiceState,
-    build_hyper_client, init_global_limiter, parse_url, run_continuous_httping, run_forward,
+    init_global_limiter, run_forward,
 };
 pub use log::{get_log_buffer, push_log, reset_start_time, LogBuffer, LogEntry};

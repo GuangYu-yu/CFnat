@@ -37,24 +37,6 @@ pub struct AppState {
     pub service: Arc<ServiceState>,
 }
 
-impl From<crate::core::StatusInfo> for StatusResponse {
-    fn from(info: crate::core::StatusInfo) -> Self {
-        Self {
-            running: info.running,
-            uptime_secs: info.uptime_secs,
-            next_health_check: info.next_health_check,
-            health_check_interval: info.health_check_interval,
-            primary_count: info.primary_count,
-            primary_target: info.primary_target,
-            backup_count: info.backup_count,
-            backup_target: info.backup_target,
-            sticky_ips: info.sticky_ips,
-            primary_ips: info.primary_ips,
-            backup_ips: info.backup_ips,
-        }
-    }
-}
-
 impl From<&StartRequest> for crate::core::types::ConfigOverrides {
     fn from(req: &StartRequest) -> Self {
         Self {
@@ -74,21 +56,6 @@ impl From<&StartRequest> for crate::core::types::ConfigOverrides {
             api_addr: None,
         }
     }
-}
-
-#[derive(Serialize, PartialEq)]
-pub struct StatusResponse {
-    pub running: bool,
-    pub uptime_secs: u64,
-    pub next_health_check: u64,
-    pub health_check_interval: u64,
-    pub primary_count: usize,
-    pub primary_target: usize,
-    pub backup_count: usize,
-    pub backup_target: usize,
-    pub sticky_ips: Vec<String>,
-    pub primary_ips: Vec<crate::core::IpInfo>,
-    pub backup_ips: Vec<crate::core::IpInfo>,
 }
 
 #[derive(Deserialize)]
@@ -121,6 +88,13 @@ struct Assets;
 #[cfg(all(feature = "web", feature = "flutter-web"))]
 #[derive(RustEmbed)]
 #[folder = "flutter/build/web"]
+// 只嵌入实际用到的 CanvasKit 变体（dart2js + chromium/full），
+// 排除 skwasm/wimp/experimental 与调试符号，减小二进制体积
+#[exclude = "canvaskit/skwasm*"]
+#[exclude = "canvaskit/skwasm_heavy*"]
+#[exclude = "canvaskit/wimp*"]
+#[exclude = "canvaskit/experimental_webparagraph/**"]
+#[exclude = "**/*.symbols"]
 struct Assets;
 
 #[cfg(feature = "web")]

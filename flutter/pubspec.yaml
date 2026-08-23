@@ -21,3 +21,11 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  fonts:
+    - family: MiSans
+      fonts:
+        - asset: assets/fonts/MiSans-Regular.otf
+        - asset: assets/fonts/MiSans-Medium.otf
+          weight: 500
+        - asset: assets/fonts/MiSans-Bold.otf
+          weight: 700

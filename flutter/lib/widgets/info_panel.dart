@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../screens/main_screen.dart' show LayoutConstants;
 import '../services/app_service.dart';
+import '../theme.dart';
 
 class InfoPanel extends StatefulWidget {
   final AppService service;
@@ -34,102 +35,11 @@ class _InfoPanelState extends State<InfoPanel> {
 
         return LayoutBuilder(
           builder: (context, constraints) {
-            final canFitTwo = constraints.maxWidth >= LayoutConstants.listSideBySideThreshold && !widget.forceVertical;
-            final canSplitVertical = constraints.maxHeight >= LayoutConstants.verticalSplitMinHeight;
-            
             return Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
                 children: [
-                  _buildHealthCheckBar(status, constraints),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: canFitTwo
-                        ? Row(
-                            children: [
-                              Expanded(
-                                child: _buildIpList(
-                                  '负载均衡',
-                                  status.primaryIps,
-                                  status.primaryCount,
-                                  status.primaryTarget,
-                                  Colors.green,
-                                  status.stickyIps,
-                                  constraints,
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: _buildIpList(
-                                  '备选列表',
-                                  status.backupIps,
-                                  status.backupCount,
-                                  status.backupTarget,
-                                  Colors.blue,
-                                  status.stickyIps,
-                                  constraints,
-                                ),
-                              ),
-                            ],
-                          )
-                        : canSplitVertical
-                            ? Column(
-                                children: [
-                                  Expanded(
-                                    child: _buildIpList(
-                                      '负载均衡',
-                                      status.primaryIps,
-                                      status.primaryCount,
-                                      status.primaryTarget,
-                                      Colors.green,
-                                      status.stickyIps,
-                                      constraints,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  Expanded(
-                                    child: _buildIpList(
-                                      '备选列表',
-                                      status.backupIps,
-                                      status.backupCount,
-                                      status.backupTarget,
-                                      Colors.blue,
-                                      status.stickyIps,
-                                      constraints,
-                                    ),
-                                  ),
-                                ],
-                              )
-                            : ListView(
-                                children: [
-                                  SizedBox(
-                                    height: 360,
-                                    child: _buildIpList(
-                                      '负载均衡',
-                                      status.primaryIps,
-                                      status.primaryCount,
-                                      status.primaryTarget,
-                                      Colors.green,
-                                      status.stickyIps,
-                                      constraints,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  SizedBox(
-                                    height: 360,
-                                    child: _buildIpList(
-                                      '备选列表',
-                                      status.backupIps,
-                                      status.backupCount,
-                                      status.backupTarget,
-                                      Colors.blue,
-                                      status.stickyIps,
-                                      constraints,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                  ),
+                  Expanded(child: _buildContentArea(status, constraints)),
                 ],
               ),
             );
@@ -139,21 +49,76 @@ class _InfoPanelState extends State<InfoPanel> {
     );
   }
 
+  Widget _buildContentArea(StatusData status, BoxConstraints constraints) {
+    final canFitTwo = constraints.maxWidth >= LayoutConstants.listSideBySideThreshold && !widget.forceVertical;
+    if (canFitTwo) {
+      return _buildSideBySide(status, constraints);
+    }
+    if (constraints.maxHeight >= LayoutConstants.verticalSplitMinHeight) {
+      return _buildVerticalSplit(status, constraints);
+    }
+    return _buildScrollable(status, constraints);
+  }
+
+  Widget _buildSideBySide(StatusData status, BoxConstraints constraints) => Row(
+        children: [
+          Expanded(child: _buildPrimaryList(status, constraints)),
+          const SizedBox(width: 10),
+          Expanded(child: _buildBackupList(status, constraints)),
+        ],
+      );
+
+  Widget _buildVerticalSplit(StatusData status, BoxConstraints constraints) => Column(
+        children: [
+          Expanded(child: _buildPrimaryList(status, constraints)),
+          const SizedBox(height: 10),
+          Expanded(child: _buildBackupList(status, constraints)),
+        ],
+      );
+
+  Widget _buildScrollable(StatusData status, BoxConstraints constraints) => ListView(
+        children: [
+          SizedBox(height: 360, child: _buildPrimaryList(status, constraints)),
+          const SizedBox(height: 10),
+          SizedBox(height: 360, child: _buildBackupList(status, constraints)),
+        ],
+      );
+
+  Widget _buildPrimaryList(StatusData status, BoxConstraints constraints) => _buildIpList(
+        '负载均衡',
+        status.primaryIps,
+        status.primaryCount,
+        status.primaryTarget,
+        AppColors.ok,
+        status.stickyIps,
+        constraints,
+      );
+
+  Widget _buildBackupList(StatusData status, BoxConstraints constraints) => _buildIpList(
+        '备选列表',
+        status.backupIps,
+        status.backupCount,
+        status.backupTarget,
+        AppColors.info,
+        status.stickyIps,
+        constraints,
+      );
+
   Widget _buildDisconnectedState() {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.cloud_off, size: 64, color: Colors.grey[600]),
+          Icon(Icons.cloud_off, size: 64, color: AppColors.textMuted),
           const SizedBox(height: 16),
           Text(
             '后端已断开',
-            style: TextStyle(fontSize: 16, color: Colors.grey[500]),
+            style: TextStyle(fontSize: 16, color: AppColors.textMuted),
           ),
           const SizedBox(height: 8),
           Text(
             '正在自动重连...',
-            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
           ),
         ],
       ),
@@ -165,24 +130,20 @@ class _InfoPanelState extends State<InfoPanel> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.play_circle_outline, size: 64, color: Colors.grey[600]),
+          Icon(Icons.play_circle_outline, size: 64, color: AppColors.textMuted),
           const SizedBox(height: 16),
           Text(
             '等待启动',
-            style: TextStyle(fontSize: 16, color: Colors.grey[500]),
+            style: TextStyle(fontSize: 16, color: AppColors.textMuted),
           ),
           const SizedBox(height: 8),
           Text(
             '点击"启动"来运行',
-            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
           ),
         ],
       ),
     );
-  }
-
-  Widget _buildHealthCheckBar(StatusData status, BoxConstraints constraints) {
-    return const SizedBox.shrink();
   }
 
   Widget _buildIpList(
@@ -205,54 +166,54 @@ class _InfoPanelState extends State<InfoPanel> {
       child: Column(
         children: [
         Container(
-          padding: EdgeInsets.symmetric(horizontal: padding, vertical: padding * 0.7),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.15),
-            border: Border(bottom: BorderSide(color: Colors.grey[800]!)),
-          ),
-          child: Center(
-            child: Text(
-              title,
-              style: TextStyle(
-                fontSize: titleSize,
-                fontWeight: FontWeight.bold,
-                color: color,
+            padding: EdgeInsets.symmetric(horizontal: padding, vertical: padding * 0.7),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              border: Border(bottom: BorderSide(color: AppColors.border)),
+            ),
+            child: Center(
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: titleSize,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
               ),
             ),
           ),
-        ),
-        Container(
-          padding: EdgeInsets.symmetric(horizontal: padding, vertical: padding * 0.5),
-          decoration: BoxDecoration(
-            color: Colors.grey[900],
-            border: Border(bottom: BorderSide(color: Colors.grey[800]!)),
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: padding, vertical: padding * 0.5),
+            decoration: BoxDecoration(
+              color: AppColors.rowBg,
+              border: Border(bottom: BorderSide(color: AppColors.border)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: Text('IP', style: TextStyle(fontSize: headerSize, color: AppColors.textSecondary)),
+                ),
+                Expanded(
+                  flex: 1,
+                  child: Text('延迟', style: TextStyle(fontSize: headerSize, color: AppColors.textSecondary), textAlign: TextAlign.right),
+                ),
+                Expanded(
+                  flex: 1,
+                  child: Text('丢包', style: TextStyle(fontSize: headerSize, color: AppColors.textSecondary), textAlign: TextAlign.right),
+                ),
+                Expanded(
+                  flex: 1,
+                  child: Text('采样', style: TextStyle(fontSize: headerSize, color: AppColors.textSecondary), textAlign: TextAlign.right),
+                ),
+              ],
+            ),
           ),
-          child: Row(
-            children: [
-              Expanded(
-                flex: 3,
-                child: Text('IP', style: TextStyle(fontSize: headerSize, color: Colors.grey[400])),
-              ),
-              Expanded(
-                flex: 1,
-                child: Text('延迟', style: TextStyle(fontSize: headerSize, color: Colors.grey[400]), textAlign: TextAlign.right),
-              ),
-              Expanded(
-                flex: 1,
-                child: Text('丢包', style: TextStyle(fontSize: headerSize, color: Colors.grey[400]), textAlign: TextAlign.right),
-              ),
-              Expanded(
-                flex: 1,
-                child: Text('采样', style: TextStyle(fontSize: headerSize, color: Colors.grey[400]), textAlign: TextAlign.right),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ips.isEmpty
-              ? Center(
-                  child: Text('暂无数据', style: TextStyle(color: Colors.grey[500], fontSize: ipSize)),
-                )
+          Expanded(
+            child: ips.isEmpty
+                ? Center(
+                    child: Text('暂无数据', style: TextStyle(color: AppColors.textMuted, fontSize: ipSize)),
+                  )
               : ListView.builder(
                   itemCount: ips.length,
                   itemBuilder: (context, index) {
@@ -273,11 +234,11 @@ class _InfoPanelState extends State<InfoPanel> {
     return Container(
       padding: EdgeInsets.symmetric(horizontal: padding, vertical: padding * 0.7),
       decoration: BoxDecoration(
-        color: isSticky ? Colors.purple.withValues(alpha: 0.15) : null,
+        color: isSticky ? AppColors.accent.withValues(alpha: 0.15) : null,
         border: Border(
-          bottom: BorderSide(color: Colors.grey[800]!),
+          bottom: BorderSide(color: AppColors.border),
           left: isSticky 
-              ? const BorderSide(color: Colors.purple, width: 3)
+              ? const BorderSide(color: AppColors.accent, width: 3)
               : BorderSide.none,
         ),
       ),
@@ -294,7 +255,7 @@ class _InfoPanelState extends State<InfoPanel> {
                       Row(
                         children: [
                           if (isSticky) ...[
-                            Icon(Icons.bolt, size: fontSize, color: Colors.purple[300]),
+                            Icon(Icons.bolt, size: fontSize, color: AppColors.accentLight),
                             SizedBox(width: padding * 0.3),
                           ],
                           Expanded(
@@ -303,7 +264,7 @@ class _InfoPanelState extends State<InfoPanel> {
                               style: TextStyle(
                                 fontSize: fontSize,
                                 fontWeight: isSticky ? FontWeight.w600 : FontWeight.w500,
-                                color: isSticky ? Colors.purple[300] : null,
+                                color: isSticky ? AppColors.accentLight : null,
                               ),
                             ),
                           ),
@@ -314,7 +275,7 @@ class _InfoPanelState extends State<InfoPanel> {
                           padding: EdgeInsets.only(left: isSticky ? fontSize + padding * 0.3 : 0),
                           child: Text(
                             ip.colo!,
-                            style: TextStyle(fontSize: fontSize - 2, color: Colors.grey[400]),
+                            style: TextStyle(fontSize: fontSize - 2, color: AppColors.textSecondary),
                           ),
                         ),
                     ],
@@ -353,15 +314,15 @@ class _InfoPanelState extends State<InfoPanel> {
   }
 
   Color _getDelayColor(double delay) {
-    if (delay <= 0) return Colors.grey[500]!;
-    if (delay < 100) return Colors.green[400]!;
-    if (delay < 300) return Colors.orange[400]!;
-    return Colors.red[400]!;
+    if (delay <= 0) return AppColors.textMuted;
+    if (delay < 100) return AppColors.ok;
+    if (delay < 300) return AppColors.warn;
+    return AppColors.danger;
   }
 
   Color _getLossColor(double loss) {
-    if (loss < 0.01) return Colors.green[400]!;
-    if (loss < 0.05) return Colors.orange[400]!;
-    return Colors.red[400]!;
+    if (loss < 0.01) return AppColors.ok;
+    if (loss < 0.05) return AppColors.warn;
+    return AppColors.danger;
   }
 }

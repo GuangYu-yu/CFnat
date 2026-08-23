@@ -1,38 +1,28 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'screens/main_screen.dart';
 import 'services/rust_service.dart'
     if (dart.library.js_interop) 'services/rust_service_web.dart';
-import 'services/api_service.dart';
 import 'services/app_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  final bool isWeb = identical(0, 0.0);
-
-  if (!isWeb) {
+  if (!kIsWeb) {
     await RustLib.init();
   }
 
-  runApp(CFnatApp(isWeb: isWeb));
+  runApp(const CFnatApp());
 }
 
 class CFnatApp extends StatelessWidget {
-  final bool isWeb;
-
-  const CFnatApp({super.key, required this.isWeb});
+  const CFnatApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider<AppService>(
-      create: (_) {
-        if (isWeb) {
-          return ApiService();
-        } else {
-          return RustService()..initialize();
-        }
-      },
+      create: (_) => RustService()..initialize(),
       child: MaterialApp(
         title: 'CFnat',
         debugShowCheckedModeBanner: false,
@@ -41,8 +31,7 @@ class CFnatApp extends StatelessWidget {
             seedColor: const Color(0xFF2D7DFF),
             brightness: Brightness.dark,
           ),
-          useMaterial3: true,
-          brightness: Brightness.dark,
+          fontFamily: 'MiSans',
           scaffoldBackgroundColor: const Color(0xFF0E1117),
           cardTheme: CardThemeData(
             color: const Color(0xFF161B22),

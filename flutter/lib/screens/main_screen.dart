@@ -91,24 +91,15 @@ class _MainScreenState extends State<MainScreen> {
             LayoutConstants.listSideBySideThreshold + 
             LayoutConstants.dividerWidth;
         
-        double configWidth;
-        if (totalWidth >= minWidthForSideBySide) {
-          final availableForConfig = totalWidth - 
-              LayoutConstants.listSideBySideThreshold - 
-              LayoutConstants.dividerWidth;
-          configWidth = availableForConfig.clamp(
-            LayoutConstants.configBaseWidth,
-            LayoutConstants.configMaxWidth,
-          );
-        } else {
-          final availableForConfig = totalWidth - 
-              LayoutConstants.listMinWidth - 
-              LayoutConstants.dividerWidth;
-          configWidth = availableForConfig.clamp(
-            LayoutConstants.configBaseWidth,
-            LayoutConstants.configMaxWidth,
-          );
-        }
+        final reservedWidth = totalWidth >= minWidthForSideBySide
+            ? LayoutConstants.listSideBySideThreshold
+            : LayoutConstants.listMinWidth;
+        final configWidth = (totalWidth - reservedWidth - LayoutConstants.dividerWidth)
+            .clamp(
+              LayoutConstants.configBaseWidth,
+              LayoutConstants.configMaxWidth,
+            )
+            .toDouble();
         
         return Row(
           children: [

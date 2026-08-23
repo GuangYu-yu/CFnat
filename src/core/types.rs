@@ -24,7 +24,6 @@ impl IpInfo {
 
 #[derive(Serialize, Clone, PartialEq, Debug)]
 pub struct StatusInfo {
-    pub version: u64,
     pub running: bool,
     pub uptime_secs: u64,
     pub health_check_interval: u64,
@@ -38,16 +37,9 @@ pub struct StatusInfo {
     pub sticky_ips: Vec<String>,
 }
 
-static STATUS_VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-pub fn increment_status_version() -> u64 {
-    STATUS_VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
-}
-
 impl Default for StatusInfo {
     fn default() -> Self {
         Self {
-            version: 0,
             running: false,
             uptime_secs: 0,
             health_check_interval: crate::core::config::get_global_config().health_check_interval.as_secs(),
@@ -83,11 +75,8 @@ impl StatusInfo {
             .map(|ip| ip.to_string())
             .collect();
 
+        // running/uptime 由调用方（build_full_status）统一填充
         Self {
-            version: increment_status_version(),
-            running: false,
-            uptime_secs: 0,
-            health_check_interval: crate::core::config::get_global_config().health_check_interval.as_secs(),
             next_health_check: lb.get_next_health_check_secs(),
             primary_count: lb.get_primary_count(),
             primary_target: lb.get_primary_target(),
@@ -96,14 +85,12 @@ impl StatusInfo {
             primary_ips,
             backup_ips,
             sticky_ips,
+            ..Default::default()
         }
     }
 
     pub fn empty() -> Self {
         Self {
-            version: 0,
-            running: false,
-            uptime_secs: 0,
             health_check_interval: crate::core::config::get_global_config().health_check_interval.as_secs(),
             ..Default::default()
         }

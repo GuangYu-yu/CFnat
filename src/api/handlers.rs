@@ -3,13 +3,13 @@ use axum::{
     Json,
 };
 
-use super::{AppState, ApiResponse, StartRequest, StatusResponse};
-use crate::core::{ServiceConfig, types::ConfigOverrides};
+use super::{AppState, ApiResponse, StartRequest};
+use crate::core::{ServiceConfig, StatusInfo, types::ConfigOverrides};
 use crate::log::get_log_buffer;
 
-pub async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
+pub async fn get_status(State(state): State<AppState>) -> Json<StatusInfo> {
     let info = state.service.build_full_status();
-    Json(StatusResponse::from(info))
+    Json(info)
 }
 
 pub async fn get_config(State(state): State<AppState>) -> Json<ServiceConfig> {

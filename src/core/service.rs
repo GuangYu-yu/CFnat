@@ -9,6 +9,9 @@ use crate::core::{IpPool, LoadBalancer, HttpingConfig, build_hyper_client, run_c
 use crate::core::types::{StatusInfo, ConfigOverrides};
 use crate::log::{push_log, reset_start_time, get_log_buffer};
 
+/// 单次测速 / 健康检查请求超时（毫秒）
+const REQUEST_TIMEOUT_MS: u64 = 1800;
+
 pub struct ServiceState {
     pub running: AtomicBool,
     pub ip_pool: RwLock<Option<Arc<IpPool>>>,
@@ -154,14 +157,18 @@ impl ServiceState {
         
         if let Some(file) = ip_file
             && !file.is_empty()
-            && let Ok(f) = std::fs::File::open(file)
         {
-            use std::io::{BufRead, BufReader};
-            for line in BufReader::new(f).lines().map_while(Result::ok) {
-                let line = line.trim();
-                if !line.is_empty() {
-                    all_ips.push(line.to_string());
+            match std::fs::File::open(file) {
+                Ok(f) => {
+                    use std::io::{BufRead, BufReader};
+                    for line in BufReader::new(f).lines().map_while(Result::ok) {
+                        let line = line.trim();
+                        if !line.is_empty() {
+                            all_ips.push(line.to_string());
+                        }
+                    }
                 }
+                Err(e) => push_log("WARN", &format!("IP 文件打开失败: {} ({})", file, e)),
             }
         }
         
@@ -204,7 +211,7 @@ impl ServiceState {
                 .with_loss_threshold(config.tlr as f32)
                 .with_health_check_url(config.http.clone())
                 .with_ports(config.tls_port, config.http_port)
-                .with_timeout(1800)
+                .with_timeout(REQUEST_TIMEOUT_MS)
                 .with_notify(notify_tx)
                 .with_client(client.clone())
                 .with_colo_filter(colo_filter.clone())
@@ -236,7 +243,7 @@ impl ServiceState {
                 HttpingConfig {
                     tls_port,
                     http_port,
-                    timeout_ms: 1800,
+                    timeout_ms: REQUEST_TIMEOUT_MS,
                     delay_limit,
                     colo_filter: colo_filter.map(Arc::new),
                     client,

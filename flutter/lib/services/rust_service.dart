@@ -22,8 +22,6 @@ class RustService extends AppService {
   bool get connected => _initialized;
   @override
   bool get isRunning => _status?.running ?? false;
-  @override
-  bool get isLoading => false;
 
   Future<void> initialize() async {
     try {
@@ -60,8 +58,6 @@ class RustService extends AppService {
       _status = StatusData(
         running: result.running,
         uptimeSecs: result.uptimeSecs.toInt(),
-        nextHealthCheck: result.nextHealthCheck.toInt(),
-        healthCheckInterval: result.healthCheckInterval.toInt(),
         primaryCount: result.primaryCount,
         primaryTarget: result.primaryTarget,
         backupCount: result.backupCount,

@@ -68,7 +68,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
     }
 }
 
-pub struct EmptyBody;
+pub(crate) struct EmptyBody;
 
 impl hyper::body::Body for EmptyBody {
     type Data = &'static [u8];
@@ -87,7 +87,7 @@ impl hyper::body::Body for EmptyBody {
 }
 
 #[derive(Clone)]
-pub struct ConnectorService {
+pub(crate) struct ConnectorService {
     timeout_duration: Duration,
 }
 
@@ -129,13 +129,13 @@ impl Service<Uri> for ConnectorService {
     }
 }
 
-pub type MyHttpsConnector = hyper_rustls::HttpsConnector<ConnectorService>;
-pub type MyHyperClient = LegacyClient<MyHttpsConnector, EmptyBody>;
+pub(crate) type MyHttpsConnector = hyper_rustls::HttpsConnector<ConnectorService>;
+pub(crate) type MyHyperClient = LegacyClient<MyHttpsConnector, EmptyBody>;
 
-pub const USER_AGENT: &str =
+const USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-pub fn build_hyper_client(timeout_ms: u64) -> Option<MyHyperClient> {
+pub(crate) fn build_hyper_client(timeout_ms: u64) -> Option<MyHyperClient> {
     let connector = ConnectorService::new(timeout_ms);
 
     let tls_config = rustls::ClientConfig::builder()
@@ -153,7 +153,7 @@ pub fn build_hyper_client(timeout_ms: u64) -> Option<MyHyperClient> {
     Some(client)
 }
 
-pub async fn send_request(
+pub(crate) async fn send_request(
     client: &MyHyperClient,
     host: &str,
     uri: Uri,
@@ -174,7 +174,7 @@ pub async fn send_request(
         .ok()
 }
 
-pub fn parse_url(url: &str) -> Option<(Uri, String, &'static str, String)> {
+pub(crate) fn parse_url(url: &str) -> Option<(Uri, String, &'static str, String)> {
     let uri = url.parse::<Uri>().ok()?;
     let host = uri.host()?.to_string();
     let scheme = uri.scheme_str()?;

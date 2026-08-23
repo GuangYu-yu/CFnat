@@ -110,10 +110,6 @@ impl Backend {
         self.state.load(Ordering::Relaxed) == BackendState::Warming as u8
     }
 
-    pub fn is_active(&self) -> bool {
-        self.state.load(Ordering::Relaxed) == BackendState::Active as u8
-    }
-
     pub fn is_isolated(&self) -> bool {
         self.state.load(Ordering::Relaxed) == BackendState::Isolated as u8
     }

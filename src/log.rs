@@ -59,12 +59,6 @@ impl LogBuffer {
         self.logs.read().iter().cloned().collect()
     }
 
-    pub fn get_recent(&self, count: usize) -> Vec<LogEntry> {
-        let logs = self.logs.read();
-        let start = if logs.len() > count { logs.len() - count } else { 0 };
-        logs.iter().skip(start).cloned().collect()
-    }
-
     pub fn clear(&self) {
         self.logs.write().clear();
     }
@@ -80,34 +74,6 @@ static LOG_BUFFER: std::sync::OnceLock<Arc<LogBuffer>> = std::sync::OnceLock::ne
 
 pub fn get_log_buffer() -> Arc<LogBuffer> {
     LOG_BUFFER.get_or_init(|| Arc::new(LogBuffer::new())).clone()
-}
-
-#[macro_export]
-macro_rules! log_info {
-    ($($arg:tt)*) => {
-        $crate::log::push_log("INFO", &format!($($arg)*));
-    };
-}
-
-#[macro_export]
-macro_rules! log_warn {
-    ($($arg:tt)*) => {
-        $crate::log::push_log("WARN", &format!($($arg)*));
-    };
-}
-
-#[macro_export]
-macro_rules! log_error {
-    ($($arg:tt)*) => {
-        $crate::log::push_log("ERROR", &format!($($arg)*));
-    };
-}
-
-#[macro_export]
-macro_rules! log_debug {
-    ($($arg:tt)*) => {
-        $crate::log::push_log("DEBUG", &format!($($arg)*));
-    };
 }
 
 pub fn push_log(level: &str, message: &str) {

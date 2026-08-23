@@ -190,7 +190,7 @@ impl LoadBalancer {
         self
     }
 
-    pub fn with_client(self, client: Arc<crate::core::hyper::MyHyperClient>) -> Self {
+    pub(crate) fn with_client(self, client: Arc<crate::core::hyper::MyHyperClient>) -> Self {
         *self.client.write() = Some(client);
         self
     }
@@ -241,10 +241,11 @@ impl LoadBalancer {
 
     pub fn select(&self) -> Option<Arc<Backend>> {
         let slots = self.sticky_slots.read();
-        let len = slots.len();
+        // 只从仍可用的槽中选取；已移除/隔离等不可用节点跳过，交给池路径处理
+        let usable: Vec<&StickySlot> = slots.iter().filter(|s| s.backend.is_selectable()).collect();
 
-        if len > 0 {
-            return self.select_from_slots(&slots, len);
+        if !usable.is_empty() {
+            return self.select_from_slots(&usable, usable.len());
         }
         drop(slots);
 
@@ -258,19 +259,19 @@ impl LoadBalancer {
         None
     }
 
-    fn select_from_slots(&self, slots: &[StickySlot], len: usize) -> Option<Arc<Backend>> {
+    fn select_from_slots(&self, slots: &[&StickySlot], len: usize) -> Option<Arc<Backend>> {
         let current_ms = now_ms();
         let on_select = |slot: &StickySlot| {
             slot.last_access_ms.store(current_ms, Ordering::Release);
         };
 
         if len == 1 {
-            on_select(&slots[0]);
+            on_select(slots[0]);
             slots[0].backend.fetch_add_connection(1);
             return Some(slots[0].backend.clone());
         }
 
-        Self::select_by_connection(slots, &self.primary_index, |s| &s.backend, |s| s.backend.clone(), on_select)
+        Self::select_by_connection(slots, &self.primary_index, |s| &s.backend, |s| s.backend.clone(), |s: &&StickySlot| on_select(s))
     }
 
     fn select_from_pool(&self, pool: &[Arc<Backend>], index: &AtomicUsize) -> Option<Arc<Backend>> {
@@ -335,7 +336,7 @@ impl LoadBalancer {
         let mut slots = self.sticky_slots.write();
         
         slots.retain(|s| {
-            if s.backend.is_isolated() {
+            if s.backend.is_isolated() || s.backend.is_removed() {
                 return false;
             }
             let last_access = s.last_access_ms.load(Ordering::Acquire);
@@ -549,20 +550,6 @@ impl LoadBalancer {
 
     pub fn get_backup_target(&self) -> usize {
         self.backup_target.load(Ordering::Relaxed)
-    }
-
-    pub fn update_delay_threshold(&self, delay_threshold: f32) {
-        self.delay_threshold.store(delay_threshold.to_bits(), Ordering::Relaxed);
-    }
-
-    pub fn update_loss_threshold(&self, loss_threshold: f32) {
-        self.loss_threshold.store(loss_threshold.to_bits(), Ordering::Relaxed);
-    }
-
-    pub fn update_primary_target(&self, primary_target: usize) {
-        self.primary_target.store(primary_target, Ordering::Relaxed);
-        let backup_target = ((primary_target as f32 * 0.5).ceil() as usize).min(get_global_config().max_backup_target).max(2);
-        self.backup_target.store(backup_target, Ordering::Relaxed);
     }
 
     pub fn add_to_primary(&self, addr: SocketAddr, initial_delay: f32, initial_loss: f32, colo: Option<String>) {
