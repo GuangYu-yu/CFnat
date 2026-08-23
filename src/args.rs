@@ -188,20 +188,32 @@ fn format_help_line(name: &str, desc: &str, default: &str) -> String {
 }
 
 pub fn print_help() {
+    let default = ServiceConfig::default();
+    let default_addr = default.addr.to_string();
+    let default_delay_limit = default.delay_limit.to_string();
+    let default_tlr = default.tlr.to_string();
+    let default_max_sticky_slots = default.max_sticky_slots.to_string();
+    let default_ips = default.ips.to_string();
+    let default_threads = default.threads.to_string();
+    let default_tls_port = default.tls_port.to_string();
+    let default_http_port = default.http_port.to_string();
+    #[cfg(feature = "web")]
+    let default_api_addr = crate::api::ApiConfig::default().api_addr.to_string();
+
     let help_args = vec![
-        ("-addr", "本地监听的 IP 和端口", "127.6.6.6:1234"),
+        ("-addr", "本地监听的 IP 和端口", default_addr.as_str()),
         #[cfg(feature = "web")]
-        ("-api", "API 服务地址和端口，端口 0 自动分配", "127.0.0.1:0"),
+        ("-api", "API 服务地址和端口，端口 0 自动分配", default_api_addr.as_str()),
         ("-colo", "筛选一个或多个数据中心，例如 HKG,LAX", "未指定"),
-        ("-dl", "有效连接的平均延迟上限（毫秒）", "500"),
-        ("-tlr", "有效连接的平均丢包率上限", "0.1"),
-        ("-http", "测速地址", "http://cp.cloudflare.com/cdn-cgi/trace"),
-        ("-s", "最大负载槽数", "5"),
-        ("-ips", "目标负载数量", "10"),
-        ("-n", "延迟测速并发上限", "16"),
-        ("-tp", "TLS 流量使用的端口号", "443"),
-        ("-p", "HTTP 流量使用的端口号", "80"),
-        ("-f", "从文件读取 IP 或 CIDR", "ip.txt"),
+        ("-dl", "有效连接的平均延迟上限（毫秒）", default_delay_limit.as_str()),
+        ("-tlr", "有效连接的平均丢包率上限", default_tlr.as_str()),
+        ("-http", "测速地址", default.http.as_str()),
+        ("-s", "最大负载槽数", default_max_sticky_slots.as_str()),
+        ("-ips", "目标负载数量", default_ips.as_str()),
+        ("-n", "延迟测速并发上限", default_threads.as_str()),
+        ("-tp", "TLS 流量使用的端口号", default_tls_port.as_str()),
+        ("-p", "HTTP 流量使用的端口号", default_http_port.as_str()),
+        ("-f", "从文件读取 IP 或 CIDR", default.ip_file.as_str()),
     ];
 
     println!("\x1b[1;35m参数说明\x1b[0m\n");

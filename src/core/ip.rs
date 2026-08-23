@@ -88,8 +88,12 @@ fn generate_refined_random(obj_addr: usize) -> u128 {
 
 const DEFAULT_SAMPLES_PER_SUBNET: u128 = 5;
 
+/// 前缀长度短于该阈值时，采样数随前缀变短而指数增长（IPv4 / IPv6）
+const V4_SAMPLE_THRESHOLD_PREFIX: u8 = 24;
+const V6_SAMPLE_THRESHOLD_PREFIX: u8 = 48;
+
 fn calculate_sample_count(prefix: u8, is_ipv4: bool) -> u128 {
-    let threshold: u8 = if is_ipv4 { 24 } else { 48 };
+    let threshold = if is_ipv4 { V4_SAMPLE_THRESHOLD_PREFIX } else { V6_SAMPLE_THRESHOLD_PREFIX };
     let shift = u32::from(threshold.saturating_sub(prefix));
     (1u128 << shift).saturating_mul(DEFAULT_SAMPLES_PER_SUBNET)
 }

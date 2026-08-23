@@ -15,6 +15,9 @@ use crate::log::push_log;
 /// 连续失败次数达到该值时判定为超限
 const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 
+/// 主队列健康检查间隔相对于备选队列的倍数
+const PRIMARY_CHECK_INTERVAL_MULT: u32 = 4;
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -91,7 +94,7 @@ pub enum AddResult {
 
 impl LoadBalancer {
     pub fn new(primary_target: usize) -> Self {
-        let backup_target = ((primary_target as f32 * 0.5).ceil() as usize).min(get_global_config().max_backup_target).max(2);
+        let backup_target = ((primary_target as f32 / 2.0).ceil() as usize).min(get_global_config().max_backup_target).max(2);
         let min_active_target = (primary_target as f32 / 2.0).ceil() as usize;
         Self {
             inner: RwLock::new(BalancerInner {
@@ -193,10 +196,8 @@ impl LoadBalancer {
     }
 
     pub fn rebuild_client(&self) {
-        if let Some(new_client) = crate::core::hyper::build_hyper_client(self.timeout_ms) {
-            *self.client.write() = Some(Arc::new(new_client));
-            push_log("INFO", "[重建] HTTP 客户端已重建");
-        }
+        *self.client.write() = Some(Arc::new(crate::core::hyper::build_hyper_client(self.timeout_ms)));
+        push_log("INFO", "[重建] HTTP 客户端已重建");
     }
 
     pub fn reset_all_metrics(&self) {
@@ -631,7 +632,7 @@ impl LoadBalancer {
             let mut backup_interval = tokio::time::interval(get_global_config().health_check_interval);
             backup_interval.tick().await;
             
-            let mut primary_interval = tokio::time::interval(get_global_config().health_check_interval.saturating_mul(4));
+            let mut primary_interval = tokio::time::interval(get_global_config().health_check_interval.saturating_mul(PRIMARY_CHECK_INTERVAL_MULT));
             primary_interval.tick().await;
 
             let mut last_tick = std::time::SystemTime::now();

@@ -30,21 +30,6 @@ pub struct Backend {
 }
 
 impl Backend {
-    pub fn new(addr: SocketAddr) -> Self {
-        Self {
-            addr,
-            colo: Mutex::new(None),
-            connections: AtomicUsize::new(0),
-            avg_delay: AtomicU32::new((-1.0_f32).to_bits()),
-            avg_loss: AtomicU32::new((-1.0_f32).to_bits()),
-            sample_count: AtomicUsize::new(0),
-            state: AtomicU8::new(BackendState::Warming as u8),
-            entered_state_at: Mutex::new(Instant::now()),
-            consecutive_failures: AtomicU32::new(0),
-            fast_fail_count: AtomicU32::new(0),
-        }
-    }
-
     pub fn new_with_initial(addr: SocketAddr, initial_delay: f32, initial_loss: f32, colo: Option<String>) -> Self {
         Self {
             addr,

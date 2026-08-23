@@ -135,7 +135,7 @@ pub(crate) type MyHyperClient = LegacyClient<MyHttpsConnector, EmptyBody>;
 const USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-pub(crate) fn build_hyper_client(timeout_ms: u64) -> Option<MyHyperClient> {
+pub(crate) fn build_hyper_client(timeout_ms: u64) -> MyHyperClient {
     let connector = ConnectorService::new(timeout_ms);
 
     let tls_config = rustls::ClientConfig::builder()
@@ -145,12 +145,10 @@ pub(crate) fn build_hyper_client(timeout_ms: u64) -> Option<MyHyperClient> {
 
     let https_connector = hyper_rustls::HttpsConnector::from((connector, Arc::new(tls_config)));
 
-    let client = LegacyClient::builder(hyper_util::rt::TokioExecutor::new())
+    LegacyClient::builder(hyper_util::rt::TokioExecutor::new())
         .pool_max_idle_per_host(1)
         .pool_idle_timeout(Duration::from_secs(1))
-        .build(https_connector);
-
-    Some(client)
+        .build(https_connector)
 }
 
 pub(crate) async fn send_request(

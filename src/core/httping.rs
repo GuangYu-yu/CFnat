@@ -17,7 +17,7 @@ use crate::log::push_log;
 /// 同一 IP 相邻两次探测之间的间隔
 const PING_GAP: Duration = Duration::from_millis(200);
 
-type PingResult = Option<(SocketAddr, f32, Option<String>, u8, bool)>;
+type PingResult = Option<(SocketAddr, f32, Option<String>, bool)>;
 
 fn extract_colo(resp: &hyper::Response<hyper::body::Incoming>) -> Option<String> {
     resp.headers()
@@ -166,20 +166,20 @@ pub(crate) async fn run_continuous_httping(
 
     let spawn_task = |ip: std::net::IpAddr, cfg: PingConfig| {
         async move { 
-            http_ping_multi(ip, &cfg).await.map(|r| (r.addr, r.delay, r.colo, r.success_count, r.colo_mismatch))
+            http_ping_multi(ip, &cfg).await.map(|r| (r.addr, r.delay, r.colo, r.colo_mismatch))
         }
     };
 
-    let mut result_cache: VecDeque<(SocketAddr, f32, Option<String>, u8)> = VecDeque::new();
+    let mut result_cache: VecDeque<(SocketAddr, f32, Option<String>)> = VecDeque::new();
 
-    let try_fill_from_cache = |cache: &mut VecDeque<(SocketAddr, f32, Option<String>, u8)>| {
-        while let Some((addr, delay, colo, success_count)) = cache.pop_front() {
+    let try_fill_from_cache = |cache: &mut VecDeque<(SocketAddr, f32, Option<String>)>| {
+        while let Some((addr, delay, colo)) = cache.pop_front() {
             let result = lb.try_add_backend(addr, delay, colo.as_deref());
             
             match result {
                 AddResult::AddedToPrimary | AddResult::AddedToBackup => {}
                 AddResult::QueueFull | AddResult::AlreadyExists => {
-                    cache.push_front((addr, delay, colo, success_count));
+                    cache.push_front((addr, delay, colo));
                     return;
                 }
             }
@@ -225,7 +225,7 @@ pub(crate) async fn run_continuous_httping(
             }
             result = tasks.join_next() => {
                 if let Some(Ok(result)) = result
-                    && let Some((addr, delay, colo, success_count, colo_mismatch)) = result
+                    && let Some((addr, delay, colo, colo_mismatch)) = result
                     && !colo_mismatch
                     && delay <= config.delay_limit as f32
                 {
@@ -234,7 +234,7 @@ pub(crate) async fn run_continuous_httping(
                     if let AddResult::QueueFull = add_result
                         && result_cache.len() < get_global_config().sample_window as usize
                     {
-                        result_cache.push_back((addr, delay, colo, success_count));
+                        result_cache.push_back((addr, delay, colo));
                     }
                 }
             }

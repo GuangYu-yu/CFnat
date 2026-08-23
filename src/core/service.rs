@@ -196,10 +196,7 @@ impl ServiceState {
 
         let config = self.get_config();
 
-        let client = build_hyper_client(config.delay_limit)
-            .ok_or("创建 HTTP 客户端失败")?;
-
-        let client = Arc::new(client);
+        let client = Arc::new(build_hyper_client(config.delay_limit));
         let (notify_tx, notify_rx) = tokio::sync::watch::channel(false);
         let colo_filter = config.colo.clone();
 
