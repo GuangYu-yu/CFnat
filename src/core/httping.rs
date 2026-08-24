@@ -17,6 +17,9 @@ use crate::log::push_log;
 /// 同一 IP 相邻两次探测之间的间隔
 const PING_GAP: Duration = Duration::from_millis(200);
 
+/// 主/备队列均满时缓存探测结果的最大条数
+const RESULT_CACHE_CAPACITY: usize = 50;
+
 type PingResult = Option<(SocketAddr, f32, Option<String>, bool)>;
 
 fn extract_colo(resp: &hyper::Response<hyper::body::Incoming>) -> Option<String> {
@@ -178,10 +181,12 @@ pub(crate) async fn run_continuous_httping(
             
             match result {
                 AddResult::AddedToPrimary | AddResult::AddedToBackup => {}
-                AddResult::QueueFull | AddResult::AlreadyExists => {
+                AddResult::QueueFull => {
                     cache.push_front((addr, delay, colo));
                     return;
                 }
+                // 已在池中：结果过期，直接丢弃，否则会永久堵住队头
+                AddResult::AlreadyExists => {}
             }
         }
     };
@@ -206,16 +211,39 @@ pub(crate) async fn run_continuous_httping(
             }
         }
 
+        // IP 池无限回收，必须给扫描设界：连续一整轮都命中已收录 IP 即停止本轮，
+        // 否则小文件场景下会退化为无 await 的同步空转
+        let sweep_limit = ip_pool.total_count() as usize;
+        let mut consecutive_hits = 0;
         while tasks.len() < concurrency {
             let Some(ip) = ip_pool.pop() else {
                 break;
             };
 
             if lb.contains(ip) {
+                consecutive_hits += 1;
+                if consecutive_hits >= sweep_limit {
+                    break;
+                }
                 continue;
             }
 
+            consecutive_hits = 0;
             tasks.spawn(spawn_task(ip, ping_config.clone()));
+        }
+
+        // 无在飞探测且本轮无新 IP：挂起等池变化（节点移除会触发 notify），
+        // 不能空转也不能阻塞 cancel
+        if tasks.is_empty() {
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    tasks.shutdown().await;
+                    break;
+                }
+                _ = notify_rx.changed() => {
+                    continue;
+                }
+            }
         }
 
         tokio::select! {
@@ -232,7 +260,7 @@ pub(crate) async fn run_continuous_httping(
                     let add_result = lb.try_add_backend(addr, delay, colo.as_deref());
 
                     if let AddResult::QueueFull = add_result
-                        && result_cache.len() < get_global_config().sample_window as usize
+                        && result_cache.len() < RESULT_CACHE_CAPACITY
                     {
                         result_cache.push_back((addr, delay, colo));
                     }

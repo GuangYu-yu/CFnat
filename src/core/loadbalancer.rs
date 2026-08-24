@@ -18,6 +18,18 @@ const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 /// 主队列健康检查间隔相对于备选队列的倍数
 const PRIMARY_CHECK_INTERVAL_MULT: u32 = 4;
 
+/// 主队列活跃下限与备选队列容量均按 primary_target 的一半推导
+const HALF_TARGET_DIVISOR: f32 = 2.0;
+
+/// 备选队列容量下限
+const MIN_BACKUP_TARGET: usize = 2;
+
+/// 构造默认的 Sticky 槽位数（实际值由 ServiceConfig 传入）
+const DEFAULT_MAX_STICKY_SLOTS: usize = 5;
+
+/// 健康检查 JoinSet 中单个任务的产出
+type CheckTaskOutput = Result<(Arc<Backend>, Option<PingResultDetail>), tokio::task::JoinError>;
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -31,13 +43,6 @@ struct StickySlot {
     last_switch: Instant,
     last_access_ms: AtomicU64,
     interval: Duration,
-}
-
-#[derive(Clone)]
-struct HealthCheckConfig {
-    ping_config: PingConfig,
-    delay_threshold: f32,
-    loss_threshold: f32,
 }
 
 #[derive(Debug)]
@@ -94,8 +99,9 @@ pub enum AddResult {
 
 impl LoadBalancer {
     pub fn new(primary_target: usize) -> Self {
-        let backup_target = ((primary_target as f32 / 2.0).ceil() as usize).min(get_global_config().max_backup_target).max(2);
-        let min_active_target = (primary_target as f32 / 2.0).ceil() as usize;
+        let half = (primary_target as f32 / HALF_TARGET_DIVISOR).ceil() as usize;
+        let backup_target = half.min(get_global_config().max_backup_target).max(MIN_BACKUP_TARGET);
+        let min_active_target = half;
         Self {
             inner: RwLock::new(BalancerInner {
                 primary: Vec::new(),
@@ -119,7 +125,7 @@ impl LoadBalancer {
             last_expand_ms: AtomicU64::new(now_ms()),
             cancel_token: CancellationToken::new(),
             next_health_check_ms: AtomicU64::new(now_ms()),
-            max_sticky_slots: get_global_config().max_sticky_slots,
+            max_sticky_slots: DEFAULT_MAX_STICKY_SLOTS,
         }
     }
 
@@ -454,8 +460,8 @@ impl LoadBalancer {
         backend.fetch_sub_connection(1);
     }
 
-    pub fn record(&self, backend: &Backend, delay_ms: Option<f32>, is_loss: bool) {
-        backend.record(delay_ms, is_loss);
+    pub fn record(&self, backend: &Backend, delay_ms: Option<f32>, loss: f32) {
+        backend.record(delay_ms, loss);
     }
 
     pub fn check_and_evict(&self, backend: &Backend) -> bool {
@@ -490,7 +496,8 @@ impl LoadBalancer {
     }
 
     /// 单一收口：检查是否允许减少一个可选后端。
-    /// 达到下限时尝试从备池补位。返回 true 表示允许操作。
+    /// 达到下限时从备池补位，主队列总量不超出 primary_target。
+    /// 返回 true 表示允许操作。
     pub(crate) fn try_deactivate(&self) -> bool {
         let selectable = self.inner.read().primary.iter()
             .filter(|b| b.is_selectable()).count();
@@ -499,20 +506,32 @@ impl LoadBalancer {
             return true;
         }
 
-        // 达到下限，尝试用备池补一个
         let mut inner = self.inner.write();
-        if let Some(pos) = inner.backup.iter().position(|b| b.is_selectable()) {
-            let replacement = inner.backup.remove(pos);
-            let promoted_addr = replacement.addr;
-            replacement.mark_active();
-            inner.primary.push(replacement);
-            drop(inner);
-            self.notify_resume();
-            push_log("INFO", &format!("[↑] {} 从备选补充到负载均衡队列", promoted_addr));
-            true
-        } else {
-            false
+        let Some(pos) = inner.backup.iter().position(|b| b.is_selectable()) else {
+            return false;
+        };
+        let replacement = inner.backup.remove(pos);
+        let promoted_addr = replacement.addr;
+        replacement.mark_active();
+
+        // 总量守恒：主队列已达目标上限时，先回收一个不可用节点（隔离/剔除）再放入替补
+        let mut evicted_ip = None;
+        if inner.primary.len() >= self.primary_target.load(Ordering::Relaxed)
+            && let Some(iso_pos) = inner.primary.iter().position(|b| !b.is_selectable())
+        {
+            let evicted = inner.primary.remove(iso_pos);
+            evicted_ip = Some(evicted.addr.ip());
         }
+        inner.primary.push(replacement);
+        drop(inner);
+
+        if let Some(ip) = evicted_ip {
+            self.ip_set.write().remove(&ip);
+        }
+
+        self.notify_resume();
+        push_log("INFO", &format!("[↑] {} 从备选补充到负载均衡队列", promoted_addr));
+        true
     }
 
     pub fn refill_from_backup(&self) {
@@ -608,19 +627,15 @@ impl LoadBalancer {
 
         let Some((_, host, scheme, path)) = crate::core::hyper::parse_url(&self.health_check_url) else { return };
         
-        let health_check_config = HealthCheckConfig {
-            ping_config: PingConfig {
-                tls_port: self.tls_port,
-                http_port: self.http_port,
-                client,
-                host: Arc::from(host.as_str()),
-                scheme: Arc::from(scheme),
-                path: Arc::from(path.as_str()),
-                timeout_ms: self.timeout_ms,
-                colo_filter: self.colo_filter.clone(),
-            },
-            delay_threshold: f32::from_bits(self.delay_threshold.load(Ordering::Relaxed)),
-            loss_threshold: f32::from_bits(self.loss_threshold.load(Ordering::Relaxed)),
+        let ping_config = PingConfig {
+            tls_port: self.tls_port,
+            http_port: self.http_port,
+            client,
+            host: Arc::from(host.as_str()),
+            scheme: Arc::from(scheme),
+            path: Arc::from(path.as_str()),
+            timeout_ms: self.timeout_ms,
+            colo_filter: self.colo_filter.clone(),
         };
 
         let current_ms = now_ms();
@@ -657,9 +672,9 @@ impl LoadBalancer {
                 last_tick = now;
 
                 if is_primary {
-                    lb.run_primary_health_check(health_check_config.clone());
+                    lb.run_primary_health_check(ping_config.clone());
                 } else {
-                    lb.run_backup_health_check(health_check_config.clone());
+                    lb.run_backup_health_check(ping_config.clone());
                 }
             }
         });
@@ -667,7 +682,7 @@ impl LoadBalancer {
 
     fn run_health_check_for_pool(
         self: &Arc<Self>,
-        config: HealthCheckConfig,
+        ping_config: PingConfig,
         pool_type: PoolType,
     ) {
         let is_primary = pool_type == PoolType::Primary;
@@ -695,9 +710,13 @@ impl LoadBalancer {
             let mut join_set = tokio::task::JoinSet::new();
             let mut removed_count = 0usize;
 
-            let ping_config = config.ping_config;
-            let delay_threshold = config.delay_threshold;
-            let loss_threshold = config.loss_threshold;
+            // 限流路径与排空路径共用的单结果处理
+            let handle_result = |res: Option<CheckTaskOutput>| {
+                let Some(Ok((backend, result))) = res else {
+                    return false;
+                };
+                Self::handle_health_check_result(backend, result, &lb, pool_type)
+            };
 
             for backend in backends {
                 if backend.is_removed() {
@@ -705,29 +724,17 @@ impl LoadBalancer {
                 }
 
                 let pc = ping_config.clone();
-                let lb = lb.clone();
-
                 join_set.spawn(async move {
-                    let result = crate::core::httping::http_ping_multi(
-                        backend.addr.ip(),
-                        &pc,
-                    ).await;
-                    (backend, result, delay_threshold, loss_threshold, lb, pool_type)
+                    let result = crate::core::httping::http_ping_multi(backend.addr.ip(), &pc).await;
+                    (backend, result)
                 });
 
-                if join_set.len() >= concurrency
-                    && let Some(res) = join_set.join_next().await
-                    && let Ok((backend, result, delay_threshold, loss_threshold, lb, pt)) = res
-                    && Self::handle_health_check_result(backend, result, delay_threshold, loss_threshold, lb, pt)
-                {
+                if join_set.len() >= concurrency && handle_result(join_set.join_next().await) {
                     removed_count += 1;
                 }
             }
 
-            while let Some(res) = join_set.join_next().await
-                && let Ok((backend, result, delay_threshold, loss_threshold, lb, pt)) = res
-                && Self::handle_health_check_result(backend, result, delay_threshold, loss_threshold, lb, pt)
-            {
+            while handle_result(join_set.join_next().await) {
                 removed_count += 1;
             }
 
@@ -747,23 +754,25 @@ impl LoadBalancer {
         });
     }
 
-    fn run_backup_health_check(self: &Arc<Self>, config: HealthCheckConfig) {
+    fn run_backup_health_check(self: &Arc<Self>, config: PingConfig) {
         self.run_health_check_for_pool(config, PoolType::Backup);
     }
 
-    fn run_primary_health_check(self: &Arc<Self>, config: HealthCheckConfig) {
+    fn run_primary_health_check(self: &Arc<Self>, config: PingConfig) {
         self.run_health_check_for_pool(config, PoolType::Primary);
     }
 
     fn handle_health_check_result(
         backend: Arc<Backend>,
         result: Option<PingResultDetail>,
-        delay_threshold: f32,
-        loss_threshold: f32,
-        lb: Arc<LoadBalancer>,
+        lb: &LoadBalancer,
         pool_type: PoolType,
     ) -> bool {
         let is_primary = pool_type == PoolType::Primary;
+
+        // 阈值仅构造期设置一次，直接从 lb 读取，避免参数快照复制
+        let delay_threshold = f32::from_bits(lb.delay_threshold.load(Ordering::Relaxed));
+        let loss_threshold = f32::from_bits(lb.loss_threshold.load(Ordering::Relaxed));
 
         enum Action {
             None,
@@ -777,7 +786,11 @@ impl LoadBalancer {
                 Action::Remove(format!("数据中心[{}]不匹配", detail.colo.as_deref().unwrap_or("未知")))
             }
             Some(detail) => {
-                backend.record(Some(detail.delay), detail.success_count < get_global_config().ping_times);
+                let ping_times = get_global_config().ping_times;
+                backend.record(
+                    Some(detail.delay),
+                    (ping_times as f32 - detail.success_count as f32) / ping_times as f32,
+                );
                 if let Some(c) = detail.colo {
                     backend.set_colo(Some(c));
                 }
@@ -795,7 +808,7 @@ impl LoadBalancer {
                 }
             }
             None => {
-                backend.record(None, true);
+                backend.record(None, 1.0);
                 backend.record_failure();
 
                 let loss_rate = backend.get_loss_rate();

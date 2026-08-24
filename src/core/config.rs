@@ -16,7 +16,6 @@ pub struct Config {
     pub warming_duration: Duration,
     pub sticky_base_interval: Duration,
     pub sticky_increment_interval: Duration,
-    pub max_sticky_slots: usize,
     pub sticky_slot_ttl: Duration,
     pub sticky_slot_expand_interval: Duration,
 }
@@ -41,7 +40,6 @@ impl Config {
             warming_duration: Duration::from_secs(60),            // 新增 IP 预热时长
             sticky_base_interval: Duration::from_secs(10),        // Sticky 模式基础切换间隔
             sticky_increment_interval: Duration::from_secs(5),    // Sticky 每增加一个槽位的间隔增量
-            max_sticky_slots: 5,                                  // Sticky 模式最大槽位数
             sticky_slot_ttl: Duration::from_secs(15),             // Sticky 槽位过期时间
             sticky_slot_expand_interval: Duration::from_secs(10), // Sticky 槽位扩展检查间隔
         }

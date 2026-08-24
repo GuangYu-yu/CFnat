@@ -33,7 +33,7 @@ async fn transfer_direction(
         .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
 
     if let Some((lb, backend, start)) = metrics {
-        lb.record(&backend, Some(start.elapsed().as_secs_f32() * 1000.0), false);
+        lb.record(&backend, Some(start.elapsed().as_secs_f32() * 1000.0), 0.0);
     }
 
     #[cfg(target_os = "linux")]
@@ -70,7 +70,6 @@ async fn race_connect(
     for b in backends {
         let b = b.clone();
         let addr = SocketAddr::new(b.addr.ip(), port);
-        let lb = lb.clone();
         set.spawn(async move {
             match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr)).await {
                 Ok(Ok(stream)) => {
@@ -78,22 +77,30 @@ async fn race_connect(
                     let _ = stream.set_linger(Some(std::time::Duration::ZERO));
                     Ok((b, Some(stream)))
                 },
-                _ => {
-                    lb.record(&b, None, true);
-                    Ok((b, None))
-                }
+                _ => Ok((b, None)),
             }
         });
     }
 
     let mut winner = None;
+    let mut failed: Vec<Arc<Backend>> = Vec::new();
     while let Some(res) = set.join_next().await {
-        if let Ok(Ok((b, Some(stream)))) = res {
-            winner = Some((b, stream));
-            break;
+        match res {
+            Ok(Ok((b, Some(stream)))) => {
+                winner = Some((b, stream));
+                break;
+            }
+            Ok(Ok((b, None))) => failed.push(b),
+            _ => {}
         }
     }
     set.shutdown().await;
+
+    if winner.is_none() {
+        for b in &failed {
+            lb.record(b, None, 1.0);
+        }
+    }
     winner
 }
 

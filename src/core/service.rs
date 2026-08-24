@@ -45,8 +45,8 @@ impl ServiceConfig {
         if let Some(v) = &overrides.http { self.http = v.clone(); }
         if let Some(v) = overrides.delay_limit { self.delay_limit = v; }
         if let Some(v) = overrides.tlr { self.tlr = v; }
-        if let Some(v) = overrides.ips { self.ips = v; }
-        if let Some(v) = overrides.threads { self.threads = v; }
+        if let Some(v) = overrides.ips { self.ips = v.max(1); }
+        if let Some(v) = overrides.threads { self.threads = v.max(1); }
         if let Some(v) = overrides.tls_port { self.tls_port = v; }
         if let Some(v) = overrides.http_port { self.http_port = v; }
         if let Some(v) = &overrides.colo { self.colo = Some(v.clone()); }

@@ -62,6 +62,8 @@ fn poll_wait(fd: RawFd, events: i16) -> io::Result<()> {
         revents: 0,
     };
     loop {
+        // SAFETY: pfd 指向单个合法 pollfd，nfds=1 与之匹配；
+        // fd 由调用方保证有效，timeout=-1 为阻塞等待。
         let ret = unsafe { libc::poll(&mut pfd, 1, -1) };
         if ret < 0 {
             let err = io::Error::last_os_error();
@@ -88,6 +90,8 @@ fn splice_loop(
         let n = loop {
             match splice_once(input_fd, pipe_writer, BUF_SIZE) {
                 Ok(0) => {
+                    // SAFETY: output_fd 是调用方传入的有效描述符，仅关闭写方向；
+                    // 失败无需处理（对端已关闭属正常情况）。
                     let _ = unsafe { libc::shutdown(output_fd, libc::SHUT_WR) };
                     return Ok(());
                 }
