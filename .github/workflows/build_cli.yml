@@ -93,6 +93,7 @@ jobs:
           version: master
 
       - name: 构建纯 CLI 二进制
+        shell: bash
         run: |
           cargo update
           if [[ "${{ matrix.os }}" == "Windows" ]]; then
